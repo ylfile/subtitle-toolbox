@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.Python
+*.egg-info/
+.eggs/
+venv/
+.venv/
+
+# PyInstaller
+build/
+dist/
+*.spec
+
+# 用户本地配置（含路径与黑边数据）
+config.json
+
+# 外部工具二进制（体积大，见 tools/README.txt）
+*.exe
+!tools/.gitkeep
+
+# 临时与测试
+*.log
+test_in.txt
+ylfile_ass/
+*.tmp
+
+# IDE
+.idea/
+.vscode/
+*.swp

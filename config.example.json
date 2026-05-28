@@ -1,0 +1,31 @@
+{
+  "_subtitle_root": "",
+  "_encode_settings": {
+    "mode": "crf",
+    "container": "mp4",
+    "codec": "h264",
+    "bitrate_mode": "source",
+    "bitrate_kbps": 4000,
+    "crf": 18,
+    "gpu_vendor": "auto"
+  },
+  "示例剧名": {
+    "top": 0,
+    "bottom": 0,
+    "crop": "1920:1080:0:0",
+    "source_width": 1920,
+    "source_height": 1080,
+    "sample_video": "S01E01.mkv",
+    "cn_pos": 1000,
+    "en_pos": 1050,
+    "info_y": 8,
+    "info_font_px": 50,
+    "cn_font_px": 60,
+    "en_font_px": 45,
+    "measured_base": "1080p",
+    "symmetric_bars": true,
+    "content_height": 1080,
+    "top_line_y": 0,
+    "bottom_line_y": 1080
+  }
+}
