@@ -683,6 +683,7 @@ def convert_srt_traditional_to_simplified(srt_path):
             cwd=str(share_dir),
             stdout=subprocess.DEVNULL,
             stderr=subprocess.PIPE,
+            **_SUBPROCESS_HIDE,
         )
     else:
         subprocess.run(
@@ -690,6 +691,7 @@ def convert_srt_traditional_to_simplified(srt_path):
             check=True,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
+            **_SUBPROCESS_HIDE,
         )
 
 
