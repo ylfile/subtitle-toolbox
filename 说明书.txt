@@ -1,0 +1,90 @@
+一、核心源码（不能删）
+这些是程序本体，删了就无法运行或无法改功能：
+
+文件	作用
+main.py
+主界面、工具栏、标签页入口
+config.py
+配置读写、工具路径
+utils.py
+公共逻辑（语言码、黑边布局、字幕清洗等）
+extract.py
+批量提取字幕
+crop.py
+黑边测量
+ass.py
+生成 ASS、删除 srt 面板
+audio_trim.py
+去多余音轨、删除原 mkv 面板
+rename_mkv_episodes.py
+规范 MKV 命名
+rename_mp4_episodes.py
+规范 MP4 命名
+二、打包与依赖（源码运行 / 重新打包需要）
+文件/目录	作用
+build.bat
+一键打包脚本
+requirements.txt
+Python 依赖列表
+mkvmerge.exe
+MKV 信息/重封装
+mkvextract.exe
+提取字幕轨
+opencc\
+繁转简（含 opencc.exe）
+share\opencc\
+OpenCC 字典配置
+config.example.json
+配置模板
+三、文档（建议保留，非运行必需）
+文件	作用
+使用说明.txt
+发给用户的使用说明
+README.md
+项目说明
+tools\README.txt
+外部工具放置说明
+docs\
+其它文档
+四、用户数据（不要删，但可备份）
+文件	说明
+config.json
+黑边测量结果、字幕根目录（运行后生成，很重要）
+五、可以删 / 可随时再生成
+文件/目录	说明
+dist\
+打包出的 exe（可随时 build.bat 重建）
+build\
+打包临时文件
+*.spec
+PyInstaller 自动生成
+__pycache__\
+Python 缓存
+ffmpeg.exe / ffprobe.exe
+当前版本已不用
+六、最小「源码备份」清单
+若只备份一份能改代码、能打包的完整工程，至少保留：
+
+main.py
+config.py
+utils.py
+extract.py
+crop.py
+ass.py
+audio_trim.py
+rename_mkv_episodes.py
+rename_mp4_episodes.py
+build.bat
+requirements.txt
+config.example.json
+mkvmerge.exe
+mkvextract.exe
+opencc\
+share\opencc\
+config.json 建议单独备份（含你已测的黑边数据）。
+
+七、只给用户分发时
+YLFile字幕工具箱.exe
+使用说明.txt
+config.json          （可选，已有黑边配置时附带）
+不需要把 .py 源码和 opencc 等文件夹发给对方，这些已打进 exe。

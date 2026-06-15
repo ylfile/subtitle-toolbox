@@ -1,6 +1,44 @@
 import re
 import subprocess
+import sys
 from pathlib import Path
+
+# ================= 隐藏窗口子进程调用（Windows） =================
+_SUBPROCESS_HIDE: dict = {}
+if sys.platform == "win32":
+    _SUBPROCESS_HIDE["creationflags"] = getattr(
+        subprocess, "CREATE_NO_WINDOW", 134217728
+    )
+    _si = subprocess.STARTUPINFO()
+    _si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+    _SUBPROCESS_HIDE["startupinfo"] = _si
+
+
+def subprocess_hide_kwargs(extra=None):
+    """返回隐藏窗口的子进程 kwargs，可选附加参数"""
+    kw = dict(_SUBPROCESS_HIDE)
+    if extra:
+        kw.update(extra)
+    return kw
+
+
+def run_hidden(cmd, **kwargs):
+    """隐藏窗口调用 subprocess.run"""
+    kw = subprocess_hide_kwargs(kwargs)
+    return subprocess.run(cmd, **kw)
+
+
+def check_output_hidden(cmd, **kwargs):
+    """隐藏窗口调用 subprocess.check_output"""
+    kw = subprocess_hide_kwargs(kwargs)
+    return subprocess.check_output(cmd, **kw)
+
+
+def popen_hidden(cmd, **kwargs):
+    """隐藏窗口调用 subprocess.Popen"""
+    kw = subprocess_hide_kwargs(kwargs)
+    return subprocess.Popen(cmd, **kw)
+
 
 # ================= 集数标识 =================
 EPISODE_RE = re.compile(r"(?i)(S\d+E\d+)")
@@ -35,7 +73,306 @@ SDH_KEYWORDS = (
     "描述",
 )
 
-# ================= 字幕清洗（提取 SDH / ASS 共用） =================
+FORCED_NAME_RE = re.compile(r"\bforced\b", re.IGNORECASE)
+
+# ================= 语言码别名映射（ISO 639-2 → 统一三字母码） =================
+AUDIO_LANG_ALIAS = {
+    "chs": "chi",
+    "cht": "chi",
+    "zho": "chi",
+    "alb": "sqi",
+    "baq": "eus",
+    "bul": "bul",
+    "cat": "cat",
+    "ces": "ces",
+    "cze": "ces",
+    "cze": "ces",
+    "dan": "dan",
+    "deu": "deu",
+    "ger": "deu",
+    "dut": "nld",
+    "ell": "ell",
+    "gre": "ell",
+    "eng": "eng",
+    "est": "est",
+    "fin": "fin",
+    "fra": "fra",
+    "fre": "fra",
+    "glg": "glg",
+    "heb": "heb",
+    "hrv": "hrv",
+    "hun": "hun",
+    "ice": "isl",
+    "isl": "isl",
+    "ind": "ind",
+    "ita": "ita",
+    "jpn": "jpn",
+    "kor": "kor",
+    "lav": "lav",
+    "lit": "lit",
+    "mac": "mkd",
+    "may": "msa",
+    "msa": "msa",
+    "nld": "nld",
+    "nob": "nob",
+    "nor": "nor",
+    "pol": "pol",
+    "por": "por",
+    "ron": "ron",
+    "rum": "ron",
+    "rus": "rus",
+    "slo": "slk",
+    "slv": "slv",
+    "spa": "spa",
+    "srp": "srp",
+    "swe": "swe",
+    "tha": "tha",
+    "tur": "tur",
+    "ukr": "ukr",
+    "vie": "vie",
+    "wel": "cym",
+    "ara": "ara",
+    "cym": "cym",
+    "eus": "eus",
+    "mkd": "mkd",
+    "sqi": "sqi",
+    "slk": "slk",
+}
+
+# 文件夹名末尾语言标识（如「弃黄从正tur」→ tur）
+FOLDER_TRAILING_LANG_RE = re.compile(r"([a-z]{2,3})$")
+
+
+# ================= 语言处理 =================
+def normalize_lang(lang):
+    if not lang:
+        return ""
+    lang = lang.lower()
+    if lang.startswith("[") and lang.endswith("]"):
+        lang = lang[1:-1]
+    return lang
+
+
+def normalize_audio_lang(lang):
+    """
+    音轨/字幕 language 归一（与 pick_audio_language / 原版字幕匹配一致）。
+    将 raw language 统一为三字母小写码。
+    """
+    if not lang:
+        return "und"
+    lang = lang.strip().lower()
+    if lang in ("", "und"):
+        return "und"
+    mapped = AUDIO_LANG_ALIAS.get(lang)
+    if mapped:
+        return mapped
+    if re.match(r"^[a-z]{2,3}$", lang):
+        return lang
+    return "und"
+
+
+def resolve_lang_hint(raw):
+    """
+    将文件夹名片段或轨 language 归一为统一语言码。
+    优先匹配 LANG_HINTS，再通过 AUDIO_LANG_ALIAS 映射。
+    """
+    if not raw:
+        return None
+    raw = raw.strip().lower()
+    if raw in LANG_HINTS:
+        return LANG_HINTS[raw]
+    norm = normalize_audio_lang(raw)
+    return norm if norm != "und" else None
+
+
+def extract_folder_audio_lang(folder_name):
+    """
+    从剧集文件夹名解析原音频语言标识（优先名称末尾标识）。
+    例：「弃黄从正tur」→ tur；「剧名.chi.eng」→ eng
+    """
+    if not folder_name:
+        return None
+    name = folder_name.strip().lower()
+    # 先尝试末尾 2-3 字母
+    m = FOLDER_TRAILING_LANG_RE.search(name)
+    if m:
+        candidate = m.group(1)
+        if candidate in AUDIO_LANG_ALIAS or candidate in LANG_HINTS:
+            resolved = resolve_lang_hint(candidate)
+            if resolved:
+                return resolved
+    # 兜底：从所有字母组合中取最后一个可识别的
+    tokens = re.split(r"[.\-_+\s\[\]()]+", name)
+    for token in reversed(tokens):
+        resolved = resolve_lang_hint(token)
+        if resolved:
+            return resolved
+    return None
+
+
+def extract_lang_from_filename(filename):
+    """从视频文件名猜语言（含末尾紧贴码，如 xxxtur.mkv）"""
+    stem = Path(filename).stem.lower()
+    tokens = re.split(r"[.\-_+\s]+", stem)
+    for token in reversed(tokens):
+        if token in LANG_HINTS:
+            return LANG_HINTS[token]
+    parts = re.findall(r"[a-zA-Z]+", stem)
+    if parts:
+        last = parts[-1].lower()
+        if last in LANG_HINTS:
+            return LANG_HINTS[last]
+    return None
+
+
+def extract_folder_lang(folder_name):
+    """文件夹名兜底（次选，兼容旧逻辑）"""
+    parts = re.findall(r"[a-zA-Z]+", folder_name)
+    if parts:
+        last = parts[-1].lower()
+        if last in LANG_HINTS:
+            return LANG_HINTS[last]
+    return None
+
+
+def pick_audio_language(audio_tracks, folder_name, mkv_name, log=None):
+    """
+    多条音轨时，按文件夹名末尾语言标识选用音轨；
+    原版字幕应取 language 与该音轨一致的轨。
+    audio_tracks: [{id, raw, name}, ...]
+    返回 normalize_audio_lang 后的语言代码。
+    """
+    if log:
+        log(f"🎧 共 {len(audio_tracks)} 条音轨：")
+        for t in audio_tracks:
+            log(f"   id={t['id']} raw={t['raw']} name={t['name']}")
+
+    # 提取文件夹名末尾语言标识
+    folder_lang = extract_folder_audio_lang(folder_name)
+    if folder_lang:
+        if log:
+            log(f"📁 文件夹名末尾音轨标识：{folder_lang}")
+        # 查找匹配的音轨
+        for t in audio_tracks:
+            lang = normalize_audio_lang(t.get("raw", ""))
+            if lang == folder_lang:
+                if log:
+                    log(f"✅ 选用音轨 id={t['id']} language={lang}")
+                return folder_lang
+        # 未找到精确匹配 → 仍用文件夹标识（原版字幕按此语言选取）
+        if log:
+            log(
+                f"⚠️ 未找到 language={folder_lang} 的音轨，"
+                f"改用首条有效语言音轨"
+            )
+        for t in audio_tracks:
+            lang = normalize_audio_lang(t.get("raw", ""))
+            if lang and lang != "und" and lang != folder_lang:
+                if log:
+                    log(f"✅ 改用相近音轨 id={t['id']} language={lang}")
+                return lang
+        # 全部 und → 用文件夹标识
+        if log:
+            log(
+                f"⚠️ 音轨均为 und，使用文件夹标识：{folder_lang}"
+                f" （与文件夹标识一致，原版字幕取同语言轨）"
+            )
+        return folder_lang
+
+    # 无文件夹标识 → 从文件名猜
+    file_lang = extract_lang_from_filename(mkv_name)
+    if file_lang:
+        for t in audio_tracks:
+            lang = normalize_audio_lang(t.get("raw", ""))
+            if lang and lang != "und":
+                if log:
+                    log(f"✅ 选用音轨 id={t['id']} language={lang}")
+                return lang
+        if log:
+            log(f"⚠️ 音轨 und，使用文件名标识：{file_lang}")
+        return file_lang
+
+    # 完全无法识别
+    if log:
+        log(
+            "⚠️ 未找到音轨 language，且无法从文件夹/文件名识别"
+        )
+
+    # 最后返回首条非 und 音轨或 und
+    for t in audio_tracks:
+        lang = normalize_audio_lang(t.get("raw", ""))
+        if lang != "und":
+            if log:
+                log(f"🎧 音轨 language = {lang}")
+            return lang
+    if log:
+        log("⚠️ 音轨均为 und")
+    return "und"
+
+
+# ================= 字幕轨选择 =================
+def is_sdh_track(track_name):
+    name = (track_name or "").lower()
+    return any(k in name for k in SDH_KEYWORDS)
+
+
+def is_forced_track(track):
+    """
+    Matroska forced 标记或轨名含 Forced（如 forced-track）。
+    track: dict，含 name、forced 等字段。
+    """
+    if track.get("forced"):
+        return True
+    name = (track.get("name") or "").lower()
+    return bool(FORCED_NAME_RE.search(name))
+
+
+def is_plain_original_track(track):
+    """
+    与音轨同语言、轨名无 SDH/Forced 等标识。
+    """
+    name = (track.get("name") or "").lower()
+    if is_sdh_track(name):
+        return False
+    if is_forced_track(track):
+        return False
+    if not name:
+        return True
+    if any(k in name for k in ("默认", "original", "complete")):
+        return True
+    return True
+
+
+def pick_original_subtitle_track(candidates):
+    """
+    原版字幕轨选择（同音轨语言）：
+    1. 不选 Forced
+    2. 优先无标识轨
+    3. 仅有带标识轨时优先 SDH（需清洗听障）
+    4. 若仅有 Forced 轨 → forced_only
+
+    返回 (track_dict | None, need_sdh_clean, status)
+    status: ok | none | forced_only
+    """
+    if not candidates:
+        return None, False, "none"
+
+    non_forced = [t for t in candidates if not is_forced_track(t)]
+    if not non_forced:
+        return candidates[0], is_sdh_track(candidates[0].get("name", "")), "forced_only"
+
+    plain = [t for t in non_forced if is_plain_original_track(t)]
+    if plain:
+        return plain[0], False, "ok"
+
+    sdh = [t for t in non_forced if is_sdh_track(t.get("name", ""))]
+    if sdh:
+        return sdh[0], True, "ok"
+
+    return non_forced[0], False, "ok"
+
+
+# ================= 字幕清洗 =================
 DROP_TEXT_PATTERNS = re.compile(r"(字幕翻译|翻译|校对|时间轴)[:：]")
 # 中文字幕署名行 → 固定链接（xxx 任意；冒号可有可无）
 TRANSLATOR_CREDIT_REPL = "更多内容：https://ylfile.com"
@@ -56,45 +393,34 @@ TRAD_CJK_RE = re.compile(
     r"[體臺國語學時這說對電腦裡開關無視頻聽讀寫經過還發現際網絡話東車長見鐘錢買賣頭髮畫裡邊應該繼續雖然準備認識讓語課幫過組織謝請問廣東門診藥醫療護檢驗報導採訪紀錄聯繫傳真郵遞區號為與萬無樂觀眾歡迎訂閱點贊轉發載內容簡介標題評論發布視頻頻道帳號登錄註冊綁定驗證碼設備雲盤軟硬體驅動下載安裝卸載壓縮解壓備份恢復復製粘貼剪切撤銷重做]"
 )
 
-
-def normalize_lang(lang):
-    if not lang:
-        return ""
-    lang = lang.lower()
-    if lang.startswith("[") and lang.endswith("]"):
-        lang = lang[1:-1]
-    return lang
+# ================= 听障辅助文本检测 =================
+HEARING_ASSIST_PATTERNS = re.compile(
+    r"\[(音乐|歌声|乐声|旋律|曲|配乐|引擎声|发动机|引擎|"
+    r"脚步声|脚步|枪声|枪响|爆炸声|爆炸|撞击声|撞击|碰撞|"
+    r"敲门声|敲门|门铃声|铃声|电话铃声|电话|"
+    r"尖叫声|尖叫|呐喊|叹息|笑声|大笑|狂笑|轻笑|偷笑|"
+    r"哭声|哭泣|抽泣|呜咽|"
+    r"掌声|鼓掌|欢呼|喝彩|喝倒彩|"
+    r"风声|雷声|雨声|水流声|水声|"
+    r"警报声|警报|警笛|"
+    r"狗吠|鸟鸣|猫叫|动物叫声|"
+    r"电子音|提示音|信号音|蜂鸣|"
+    r"对话|交谈|争吵|"
+    r"模糊|不清|"
+    r"说\w*语|说着|用\w+说|"
+    r"\w+声|"
+    r"\w+音|"
+    r"静音|沉默|"
+    r"\w+地\w+|"
+    r"\w+的\w+"
+    r")\]",
+)
 
 
 def extract_episode_id(name):
     """从文件名提取 S01E01"""
     m = EPISODE_RE.search(name)
     return m.group(1).upper() if m else None
-
-
-def extract_lang_from_filename(filename):
-    """音轨 und 时，从视频文件名中的英文标识猜语言"""
-    stem = Path(filename).stem.lower()
-    tokens = re.split(r"[.\-_+\s]+", stem)
-    for token in reversed(tokens):
-        if token in LANG_HINTS:
-            return LANG_HINTS[token]
-    parts = re.findall(r"[a-zA-Z]+", stem)
-    if parts:
-        last = parts[-1].lower()
-        if last in LANG_HINTS:
-            return LANG_HINTS[last]
-    return None
-
-
-def extract_folder_lang(folder_name):
-    """文件夹名兜底（次选）"""
-    parts = re.findall(r"[a-zA-Z]+", folder_name)
-    if parts:
-        last = parts[-1].lower()
-        if last in LANG_HINTS:
-            return LANG_HINTS[last]
-    return None
 
 
 def subtitle_output_names(mkv_path):
@@ -104,26 +430,6 @@ def subtitle_output_names(mkv_path):
     if not ep:
         ep = mkv_path.stem
     return f"{ep}原版.srt", f"{ep}中文版.srt"
-
-
-def is_sdh_track(track_name):
-    name = (track_name or "").lower()
-    return any(k in name for k in SDH_KEYWORDS)
-
-
-def pick_original_subtitle_track(candidates):
-    """
-    多轨时优先非 SDH；仅有 SDH 时用 SDH 并标记需清洗。
-    返回 (track_dict, need_sdh_clean) 或 (None, False)
-    """
-    if not candidates:
-        return None, False
-
-    plain = [t for t in candidates if not is_sdh_track(t.get("name", ""))]
-    if plain:
-        return plain[0], False
-
-    return candidates[0], True
 
 
 def is_blank_dialogue(text):
@@ -230,6 +536,51 @@ def is_traditional_chinese_text(text, min_hits=2):
     return len(TRAD_CJK_RE.findall(text[:15000])) >= min_hits
 
 
+def srt_has_hearing_assistance_text(text):
+    """
+    检测 SRT 是否含听障/音效类方括号辅助说明（如 [音乐]、[脚步声]）。
+    """
+    if not text:
+        return False
+    return bool(HEARING_ASSIST_PATTERNS.search(text))
+
+
+def prepare_original_srt_for_ass(srt_path, log=None):
+    """
+    生成 ASS 前处理原版 SRT：若含听障辅助文本则清洗并写回；否则不改动。
+    返回是否执行了清洗。
+    """
+    path = Path(srt_path)
+    if not path.is_file():
+        return False
+    raw = path.read_text(encoding="utf-8")
+    if not srt_has_hearing_assistance_text(raw):
+        return False
+    # 清洗听障标签
+    blocks = raw.strip().split("\n\n")
+    out_blocks = []
+    for block in blocks:
+        lines = block.split("\n")
+        if len(lines) < 3:
+            continue
+        idx, time_line = lines[0], lines[1]
+        text = clean_hearing_tags(" ".join(lines[2:]))
+        if is_blank_dialogue(text):
+            continue
+        if not text:
+            continue
+        out_blocks.append(f"{idx}\n{time_line}\n{text}")
+    path.write_text(
+        "\n\n".join(out_blocks) + ("\n" if out_blocks else ""),
+        encoding="utf-8",
+    )
+    if log:
+        log(
+            f"：检测到听障辅助说明，已删除后再合成 ASS"
+        )
+    return True
+
+
 def _opencc_exe():
     from config import TOOLS
 
@@ -238,6 +589,16 @@ def _opencc_exe():
         return exe
     alt = Path(__file__).resolve().parent / "opencc" / "opencc.exe"
     return alt if alt.is_file() else None
+
+
+def _opencc_share_dir():
+    """
+    OpenCC 配置与 .ocd2 字典所在目录（须作 cwd，不能用绝对路径 -c）。
+    """
+    t2s_path = Path(__file__).resolve().parent / "share" / "opencc"
+    if t2s_path.is_dir():
+        return t2s_path
+    return None
 
 
 def convert_srt_traditional_to_simplified(srt_path):
@@ -249,14 +610,23 @@ def convert_srt_traditional_to_simplified(srt_path):
     if not opencc:
         raise FileNotFoundError("未找到 opencc.exe，无法繁转简")
     t2s_cfg = Path(TOOLS["t2s"])
-    if not t2s_cfg.is_file():
-        t2s_cfg = Path(__file__).resolve().parent / "share" / "opencc" / "t2s.json"
-    subprocess.run(
-        [str(opencc), "-c", str(t2s_cfg), "-i", str(path), "-o", str(path)],
-        check=True,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
+    share_dir = _opencc_share_dir()
+    if share_dir:
+        # 用 OpenCC 配置目录作 cwd
+        subprocess.run(
+            [str(opencc), "-c", str(t2s_cfg), "-i", str(path), "-o", str(path)],
+            check=True,
+            cwd=str(share_dir),
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    else:
+        subprocess.run(
+            [str(opencc), "-c", str(t2s_cfg), "-i", str(path), "-o", str(path)],
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
 
 
 def ensure_chinese_simplified(srt_path, log=None, force=False):
@@ -281,6 +651,36 @@ def ensure_chinese_simplified(srt_path, log=None, force=False):
     return True
 
 
+def clean_srt_file(path, drop_credits=False, is_chinese=False):
+    """清洗已提取的 SRT（SDH 听障标签、中文字幕翻译署名替换等）"""
+    path = Path(path)
+    raw = path.read_text(encoding="utf-8")
+    blocks = raw.strip().split("\n\n")
+    out_blocks = []
+
+    for block in blocks:
+        lines = block.split("\n")
+        if len(lines) < 3:
+            continue
+
+        idx, time_line = lines[0], lines[1]
+        text = normalize_subtitle_text(" ".join(lines[2:]), is_chinese=is_chinese)
+        if is_blank_dialogue(text):
+            continue
+        if drop_credits and should_drop(text):
+            continue
+        if not text:
+            continue
+
+        out_blocks.append(f"{idx}\n{time_line}\n{text}")
+
+    path.write_text(
+        "\n\n".join(out_blocks) + ("\n" if out_blocks else ""),
+        encoding="utf-8",
+    )
+
+
+# ================= 黑边与位置计算 =================
 REF_PLAYRES_Y = 1080
 INFO_FONT_REF = 50
 CN_FONT_REF = 60
@@ -449,6 +849,21 @@ def measure_base_resolution(height):
     return "4K" if height >= 1440 else "1080p"
 
 
+def playres_from_crop_cfg(crop_cfg):
+    """
+    按黑边测量记录确定 ASS PlayRes 与分辨率标签。
+    4K 片源使用测量时的 source_width × source_height；1080p 仍为 1920×1080。
+    返回 (playres_x, playres_y, res_label)
+    """
+    src_w = crop_cfg.get("source_width", 0) or 0
+    src_h = crop_cfg.get("source_height", 0) or 0
+
+    if src_h >= 1440:
+        return src_w, src_h, "4K"
+
+    return 1920, 1080, "1080p"
+
+
 def show_name_from_video(root_path, video_path):
     """根目录下第一层子文件夹名 = 剧集名"""
     root = Path(root_path).resolve()
@@ -462,35 +877,7 @@ def show_name_from_video(root_path, video_path):
     return video.parent.name
 
 
-def clean_srt_file(path, drop_credits=False, is_chinese=False):
-    """清洗已提取的 SRT（SDH 听障标签、中文字幕翻译署名替换等）"""
-    path = Path(path)
-    raw = path.read_text(encoding="utf-8")
-    blocks = raw.strip().split("\n\n")
-    out_blocks = []
-
-    for block in blocks:
-        lines = block.split("\n")
-        if len(lines) < 3:
-            continue
-
-        idx, time_line = lines[0], lines[1]
-        text = normalize_subtitle_text(" ".join(lines[2:]), is_chinese=is_chinese)
-        if is_blank_dialogue(text):
-            continue
-        if drop_credits and should_drop(text):
-            continue
-        if not text:
-            continue
-
-        out_blocks.append(f"{idx}\n{time_line}\n{text}")
-
-    path.write_text(
-        "\n\n".join(out_blocks) + ("\n" if out_blocks else ""),
-        encoding="utf-8",
-    )
-
-
+# ================= 目录与文件遍历 =================
 def find_mkv_for_episode(folder, episode_id):
     folder = Path(folder)
     ep = episode_id.upper()

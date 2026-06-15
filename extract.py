@@ -5,26 +5,16 @@ from pathlib import Path
 
 from config import TOOLS
 from utils import (
+    check_output_hidden,
+    run_hidden,
     normalize_lang,
-    extract_lang_from_filename,
-    extract_folder_lang,
+    normalize_audio_lang,
     subtitle_output_names,
     pick_original_subtitle_track,
+    pick_audio_language,
     clean_srt_file,
     ensure_chinese_simplified,
 )
-
-LANG_ALIAS = {
-    "thai": "tha",
-    "kor": "kor",
-    "jpn": "jpn",
-    "eng": "eng",
-    "chi": "chi",
-}
-
-
-def normalize_alias(lang):
-    return LANG_ALIAS.get(lang, lang)
 
 
 def _parse_tracks(info):
@@ -37,8 +27,13 @@ def _parse_tracks(info):
     return []
 
 
+def count_extract_jobs(show_dirs):
+    """统计待提取的 mkv 数量"""
+    return sum(len(list(d.glob("*.mkv"))) for d in show_dirs)
+
+
 def _extract_track(mkv, track_id, out_path):
-    result = subprocess.run(
+    result = run_hidden(
         [TOOLS["mkvextract"], str(mkv), "tracks", f"{track_id}:{out_path}"],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
@@ -54,7 +49,13 @@ def _select_chinese_track(chi_tracks):
 
     for t in chi_tracks:
         name = (t.get("name") or "").lower()
-        if "simplified" in name or "简体" in name:
+        lang = (t.get("lang") or "").lower()
+
+        if lang in ("chi", "chs"):
+            chi_sim = t
+        elif lang == "cht":
+            chi_tra = t
+        elif "simplified" in name or "简体" in name:
             chi_sim = t
         elif "traditional" in name or "繁体" in name:
             chi_tra = t
@@ -75,36 +76,31 @@ def extract_subtitles(mkv, out_dir, log):
     log(f"🔍 调用 mkvmerge: {TOOLS['mkvmerge']}")
 
     info = json.loads(
-        subprocess.check_output(
+        check_output_hidden(
             [TOOLS["mkvmerge"], "-J", str(mkv)], encoding="utf-8"
         )
     )
     tracks = _parse_tracks(info)
 
-    # ========= 音轨 → 原版语言 =========
-    audio_lang = None
+    # ========= 音轨收集 =========
+    audio_tracks = []
     for t in tracks:
         if (t.get("type") or "").lower() != "audio":
             continue
-        raw = t.get("properties", {}).get("language", "")
-        audio_lang = normalize_lang(raw)
-        log(f"🎧 音轨 language = {raw} → {audio_lang}")
-        break
+        props = t.get("properties", {})
+        audio_tracks.append(
+            {
+                "id": t.get("id"),
+                "raw": props.get("language", ""),
+                "name": props.get("track_name") or "",
+            }
+        )
 
-    if not audio_lang or audio_lang == "und":
-        file_lang = extract_lang_from_filename(mkv.name)
-        if file_lang:
-            log(f"⚠️ 音轨 und，使用文件名语言标识：{file_lang}")
-            audio_lang = file_lang
-        else:
-            folder_lang = extract_folder_lang(mkv.parent.name)
-            if folder_lang:
-                log(f"⚠️ 音轨 und，使用文件夹名兜底：{folder_lang}")
-                audio_lang = folder_lang
-            else:
-                raise RuntimeError("未找到音轨 language，且无法从文件名识别")
-
-    audio_lang = normalize_alias(audio_lang)
+    audio_lang = pick_audio_language(
+        audio_tracks, mkv.parent.name, mkv.name, log=log
+    )
+    audio_lang = normalize_audio_lang(audio_lang)
+    log(f"🎯 原版语言（与所选音轨一致）：{audio_lang}")
 
     # ========= 收集字幕轨 =========
     orig_candidates = []
@@ -116,13 +112,20 @@ def extract_subtitles(mkv, out_dir, log):
 
         props = t.get("properties", {})
         raw_lang = props.get("language", "")
-        lang = normalize_alias(normalize_lang(raw_lang))
+        lang = normalize_audio_lang(raw_lang)
         tid = t.get("id")
         name = props.get("track_name") or ""
 
         log(f"📜 字幕轨 id={tid} raw={raw_lang} norm={lang} name={name}")
 
-        entry = {"id": tid, "name": name, "lang": lang}
+        forced_flag = bool(props.get("flag_forced"))
+
+        entry = {
+            "id": tid,
+            "name": name,
+            "lang": lang,
+            "forced": forced_flag,
+        }
 
         if lang == audio_lang:
             orig_candidates.append(entry)
@@ -135,9 +138,17 @@ def extract_subtitles(mkv, out_dir, log):
     out_chi = out_dir / chi_name
 
     # ========= 原版字幕 =========
-    orig_track, need_sdh_clean = pick_original_subtitle_track(orig_candidates)
+    orig_track, need_sdh_clean, pick_status = pick_original_subtitle_track(
+        orig_candidates
+    )
 
-    if orig_track:
+    if pick_status == "forced_only":
+        log(
+            f"⚠️ {mkv.name}：与音轨同语言的字幕仅有 Forced 轨，"
+            f"不提取原版，仅提取中文字幕"
+        )
+        orig_track = None
+    elif orig_track:
         if need_sdh_clean:
             log(f"⚠️ 仅找到 SDH 轨，将清洗听障说明：id={orig_track['id']}")
         else:
@@ -147,7 +158,7 @@ def extract_subtitles(mkv, out_dir, log):
         if need_sdh_clean:
             clean_srt_file(out_orig, drop_credits=False)
         log(f"✅ 原版字幕：{out_orig.name}")
-    else:
+    elif pick_status != "forced_only":
         log("⚠️ 未找到原版字幕，仅提取中文字幕")
 
     # ========= 中文字幕 =========
@@ -155,7 +166,7 @@ def extract_subtitles(mkv, out_dir, log):
     if not chi_track:
         if not orig_track:
             raise RuntimeError("未找到中文字幕")
-        return
+        return None
 
     log(f"✅ 选定中文轨：id={chi_track['id']} name={chi_track['name']}")
 
@@ -170,7 +181,6 @@ def extract_subtitles(mkv, out_dir, log):
 
     if orig_track:
         log("✅ 原版 + 中文字幕提取完成")
-    else:
-        log("✅ 仅生成中文字幕")
+        return None
 
-
+    log("✅ 仅生成中文字幕")

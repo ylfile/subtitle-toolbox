@@ -1,82 +1,97 @@
-# config.py — 黑边配置读写（每部剧一条记录，与具体集数视频无关）
-import json  # 导入 JSON 读写库
-from pathlib import Path  # 导入路径处理库
+# config.py — 配置管理
+import json
+import sys
+from pathlib import Path
 
 APP_NAME = "YLFile字幕工具箱"
 APP_TAGLINE = "微博：YLFile  |  官网：https://ylfile.com"
 
-_APP_DIR = Path(__file__).resolve().parent
-CONFIG_FILE = _APP_DIR / "config.json"  # 始终与程序同目录，避免工作目录不同读不到配置
-META_ROOT_KEY = "_subtitle_root"
-META_ENCODE_KEY = "_encode_settings"
 
-TOOLS = {  # 外部工具可执行文件路径表
-    "mkvmerge": "mkvmerge.exe",  # MKV 信息读取
-    "mkvextract": "mkvextract.exe",  # 字幕轨提取
-    "ffmpeg": "ffmpeg.exe",  # 视频压制
-    "opencc": "opencc/opencc.exe",  # 繁简转换
-    "t2s": "share/opencc/t2s.json",  # 繁转简配置
+def _app_dir():
+    """源码：脚本目录；打包 exe：exe 所在目录"""
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+    return Path(__file__).resolve().parent
+
+
+def _bundle_dir():
+    """PyInstaller 单文件运行时，依赖解压到此临时目录"""
+    if getattr(sys, "frozen", False):
+        meipass = getattr(sys, "_MEIPASS", None)
+        if meipass:
+            return Path(meipass)
+    return None
+
+
+_APP_DIR = _app_dir()
+_BUNDLE_DIR = _bundle_dir()
+CONFIG_FILE = _APP_DIR / "config.json"
+META_ROOT_KEY = "_subtitle_root"
+
+
+def _resource_roots():
+    """查找工具顺序：exe 同目录（可覆盖）→ 打包内嵌目录"""
+    roots = [_APP_DIR]
+    if _BUNDLE_DIR and _BUNDLE_DIR != _APP_DIR:
+        roots.append(_BUNDLE_DIR)
+    return roots
+
+
+def resolve_resource(rel):
+    """将相对路径解析为实际存在的文件（mkv 工具、opencc 配置等）"""
+    rel_path = Path(rel)
+    for root in _resource_roots():
+        candidate = root / rel_path
+        if candidate.is_file():
+            return candidate.resolve()
+    return (_APP_DIR / rel_path).resolve()
+
+
+TOOLS = {
+    "mkvmerge": str(resolve_resource("mkvmerge.exe")),
+    "mkvextract": str(resolve_resource("mkvextract.exe")),
+    "opencc": str(resolve_resource("opencc/opencc.exe")),
+    "t2s": str(resolve_resource("share/opencc/t2s.json")),
 }
 
 CROP_TABLE = {}
 SUBTITLE_ROOT = ""
-ENCODE_SETTINGS = {}
 
 
-def _is_show_key(key):  # 判断 JSON 键是否为剧集名（非元数据）
-    return isinstance(key, str) and not key.startswith("_")  # 字符串且不以 _ 开头
+def _is_show_key(key):
+    return isinstance(key, str) and not key.startswith("_")
 
 
 def load_config():
-    global SUBTITLE_ROOT, ENCODE_SETTINGS
-    from encode_settings import normalize_encode_settings, DEFAULT_ENCODE_SETTINGS
-
+    global SUBTITLE_ROOT
     CROP_TABLE.clear()
     SUBTITLE_ROOT = ""
-    ENCODE_SETTINGS = normalize_encode_settings(DEFAULT_ENCODE_SETTINGS)
-
     if not CONFIG_FILE.exists():
         return
-
     try:
-        with open(CONFIG_FILE, "r", encoding="utf-8") as f:
-            data = json.load(f)
+        raw = CONFIG_FILE.read_text(encoding="utf-8")
+        data = json.loads(raw)
+        if META_ROOT_KEY in data:
+            SUBTITLE_ROOT = data.pop(META_ROOT_KEY) or ""
+        for k, v in data.items():
+            if _is_show_key(k) and isinstance(v, dict):
+                CROP_TABLE[k] = v
     except Exception:
-        return
-
-    if not isinstance(data, dict):
-        return
-
-    SUBTITLE_ROOT = data.get(META_ROOT_KEY, "") or ""
-    if isinstance(data.get(META_ENCODE_KEY), dict):
-        ENCODE_SETTINGS = normalize_encode_settings(data[META_ENCODE_KEY])
-    for key, val in data.items():
-        if _is_show_key(key) and isinstance(val, dict) and "top" in val and "bottom" in val:
-            CROP_TABLE[key] = val
+        pass
 
 
 def save_config():
-    payload = {
-        META_ROOT_KEY: SUBTITLE_ROOT,
-        META_ENCODE_KEY: ENCODE_SETTINGS,
-    }
+    payload = {META_ROOT_KEY: SUBTITLE_ROOT}
     payload.update(CROP_TABLE)
-    with open(CONFIG_FILE, "w", encoding="utf-8") as f:
-        json.dump(payload, f, ensure_ascii=False, indent=2)
+    CONFIG_FILE.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
 
 
-def save_encode_settings(settings):
-    global ENCODE_SETTINGS
-    from encode_settings import normalize_encode_settings
-
-    ENCODE_SETTINGS = normalize_encode_settings(settings)
+def set_subtitle_root(path):
+    global SUBTITLE_ROOT
+    SUBTITLE_ROOT = str(path) if path else ""
     save_config()
-
-
-def set_subtitle_root(path):  # 设置并保存字幕根目录
-    global SUBTITLE_ROOT  # 声明修改全局根目录
-    SUBTITLE_ROOT = str(path) if path else ""  # 转为字符串或置空
-    save_config()  # 立即持久化
 
 
 def get_crop_for_show(show_name):
@@ -93,18 +108,16 @@ def get_crop_for_show(show_name):
 
 
 def get_crop_for_folder(show_dir):
-    """
-    按剧集文件夹解析黑边配置：
-    1. 文件夹名与 config 键一致（忽略大小写）
-    2. 该文件夹内存在 config 里记录的 sample_video
-    """
+    """按剧集文件夹解析黑边配置"""
     show_dir = Path(show_dir)
     cfg = get_crop_for_show(show_dir.name)
     if cfg:
         return cfg
     for v in CROP_TABLE.values():
         sample = (v.get("sample_video") or "").strip()
-        if sample and (show_dir / sample).is_file():
+        if not sample:
+            continue
+        if (show_dir / sample).is_file():
             return v
     return None
 
@@ -121,28 +134,18 @@ def get_crop(show_name):
     return get_crop_for_show(show_name)
 
 
-def save_crop(
-    show_name,
-    top,
-    bottom,
-    src_w,
-    src_h,
-    sample_video="",
-    cn_pos=0,
-    en_pos=0,
-    info_y=0,
-    content_height=None,
-    top_line_y=None,
-    bottom_line_y=None,
-):
-    from utils import layout_subtitles_from_crop, measure_base_resolution
+def save_crop(show_name, top, bottom, src_w, src_h,
+              sample_video="", cn_pos=None, en_pos=None,
+              info_y=None, content_height=None,
+              top_line_y=None, bottom_line_y=None):
+    from utils import measure_base_resolution, layout_subtitles_from_crop
 
     crop_h = src_h - top - bottom
     base = measure_base_resolution(src_h)
     layout = layout_subtitles_from_crop(
-        src_w, src_h, top, bottom, base, content_top_y=top_line_y if top_line_y else top
+        src_w, src_h, top, bottom,
+        content_top_y=top_line_y if top_line_y else top,
     )
-
     entry = {
         "top": int(top),
         "bottom": int(bottom),
@@ -153,9 +156,9 @@ def save_crop(
         "cn_pos": int(cn_pos or layout["cn_pos"]),
         "en_pos": int(en_pos or layout["en_pos"]),
         "info_y": int(info_y or layout["info_y"]),
-        "info_font_px": layout["info_font_px"],
-        "cn_font_px": layout["cn_font_px"],
-        "en_font_px": layout["en_font_px"],
+        "info_font_px": layout.get("info_font_px"),
+        "cn_font_px": layout.get("cn_font_px"),
+        "en_font_px": layout.get("en_font_px"),
         "measured_base": base,
         "symmetric_bars": True,
     }
@@ -165,6 +168,9 @@ def save_crop(
         entry["top_line_y"] = int(top_line_y)
     if bottom_line_y is not None:
         entry["bottom_line_y"] = int(bottom_line_y)
-
     CROP_TABLE[show_name] = entry
     save_config()
+    return entry
+
+
+load_config()
