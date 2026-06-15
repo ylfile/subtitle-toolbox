@@ -159,7 +159,8 @@ def _append_info_dialogues(ass_lines, style_info, cx, info_y, info_an):
 
 def _append_watermark_dialogue(ass_lines, playres_x, playres_y):
     """如果水印配置启用且图片存在，追加水印 Dialogue 行"""
-    from config import WATERMARK_CONFIG as wm
+    import config
+    wm = config.WATERMARK_CONFIG
     if not wm.get("enabled"):
         return
     img_path = wm.get("image_path", "")
@@ -184,7 +185,7 @@ def _append_watermark_dialogue(ass_lines, playres_x, playres_y):
             end_time=wm.get("end_time", "1:00:00.00"),
         )
         ass_lines.append(dialogue)
-    except Exception:
+    except Exception as e:
         pass  # 水印生成失败不影响字幕
 
 
@@ -813,12 +814,11 @@ def embed_ass_panel(parent, app):
     info_text.pack(fill=tk.X)
 
     # 加载当前字幕组信息到文本框
-    from config import INFO_DIALOGUES as cur_info, DEFAULT_INFO_DIALOGUES, save_config, load_config
+    from config import INFO_DIALOGUES as cur_info, DEFAULT_INFO_DIALOGUES, save_config
     def _reload_info_text():
         info_text.delete("1.0", tk.END)
-        load_config()
-        from config import INFO_DIALOGUES as reloaded
-        for start, end, text in reloaded:
+        import config
+        for start, end, text in config.INFO_DIALOGUES:
             info_text.insert(tk.END, f"{start} → {end} → {text}\n")
     _reload_info_text()
 

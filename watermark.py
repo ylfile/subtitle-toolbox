@@ -1,5 +1,19 @@
-# watermark.py — 图片水印转 ASS 绘图命令 + 渐显/渐隐
+# watermark.py — 图片水印转 ASS 绘图命令 + 渐显/渐隐 + 缓存
+import hashlib
 from pathlib import Path
+
+# 缓存：{图片路径+缩放 → (drawing_str, width, height)}
+_CACHE = {}
+
+
+def _cache_key(image_path, scale):
+    """生成缓存键（文件内容哈希+缩放）"""
+    try:
+        data = Path(image_path).read_bytes()
+        h = hashlib.md5(data).hexdigest()[:12]
+    except Exception:
+        h = str(image_path)
+    return f"{h}_{scale}"
 
 
 def _bgr_to_ass(b, g, r):
@@ -10,8 +24,13 @@ def _bgr_to_ass(b, g, r):
 def image_to_ass_drawing_grouped(image_path, scale=100):
     r"""
     将图片转为 ASS 绘图命令（\p1 模式），按颜色分组。
+    带缓存：相同图片+缩放只转一次。
     返回 (drawing_str, width, height)
     """
+    key = _cache_key(image_path, scale)
+    if key in _CACHE:
+        return _CACHE[key]
+
     from PIL import Image
 
     img = Image.open(image_path).convert("RGBA")
@@ -33,12 +52,13 @@ def image_to_ass_drawing_grouped(image_path, scale=100):
                 continue
             color = f"&H00{b:02X}{g:02X}{r:02X}&"
             alpha_hex = f"&H{255 - a:02X}&"
-            key = (color, alpha_hex)
-            if key not in color_groups:
-                color_groups[key] = []
-            color_groups[key].append((x, y))
+            key_c = (color, alpha_hex)
+            if key_c not in color_groups:
+                color_groups[key_c] = []
+            color_groups[key_c].append((x, y))
 
     if not color_groups:
+        _CACHE[key] = ("", 0, 0)
         return "", 0, 0
 
     # 为每个颜色组生成绘图命令
@@ -56,7 +76,9 @@ def image_to_ass_drawing_grouped(image_path, scale=100):
             f"{{\\c{color}\\alpha{alpha}\\p1\\pos(0,0){path_str}\\p0}}"
         )
 
-    return "".join(commands), w, h
+    result = "".join(commands), w, h
+    _CACHE[key] = result
+    return result
 
 
 def generate_watermark_dialogue(

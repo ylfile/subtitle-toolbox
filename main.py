@@ -89,19 +89,13 @@ class App(tk.Tk):
         prog_frame = tk.Frame(self, bg=BG)
         prog_frame.pack(fill=tk.X, padx=16, pady=(2, 0))
 
-        self.task_status = tk.StringVar(value="就  绪")
-        tk.Label(
-            prog_frame, textvariable=self.task_status, font=("微软雅黑", 10),
-            fg=TEXT, bg=BG, anchor="w", width=9,
-        ).pack(side=tk.LEFT)
-
         style = ttk.Style()
         style.theme_use("clam")
         style.configure("color.Horizontal.TProgressbar", background="#2ecc71", troughcolor="#e0e3eb", bordercolor="#ffffff", lightcolor="#2ecc71", darkcolor="#27ae60")
         self.task_progress = ttk.Progressbar(
             prog_frame, style="color.Horizontal.TProgressbar", mode="determinate", maximum=100
         )
-        self.task_progress.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(8, 8), ipady=3)
+        self.task_progress.pack(side=tk.LEFT, fill=tk.X, expand=True, ipady=3)
 
         self.btn_stop = tk.Button(
             prog_frame, text="停止", command=self.stop_task,
@@ -110,9 +104,10 @@ class App(tk.Tk):
             font=("微软雅黑", 9), bd=0, padx=14, pady=2,
             cursor="hand2",
         )
-        self.btn_stop.pack(side=tk.LEFT)
+        self.btn_stop.pack(side=tk.LEFT, padx=(8, 0))
 
         self._global_refresh_callbacks = []
+        self._task_status_footer = tk.StringVar(value="")
 
         self.notebook = ttk.Notebook(self)
         self.notebook.pack(fill=tk.BOTH, expand=True, padx=16, pady=(4, 4))
@@ -145,9 +140,14 @@ class App(tk.Tk):
 
         self.notebook.bind("<<NotebookTabChanged>>", self._on_tab_changed)
 
-        # ---- 底部脚标 ----
+        # ---- 底部脚标 + 底部状态提示 ----
         footer = tk.Frame(self, bg=BG)
         footer.pack(fill=tk.X)
+        self._task_status_footer = tk.StringVar(value="")
+        tk.Label(
+            footer, textvariable=self._task_status_footer, font=("微软雅黑", 10),
+            anchor="center", fg=TEXT, bg=BG,
+        ).pack(fill=tk.X, padx=16, pady=(2, 0))
         tk.Label(
             footer, text=APP_TAGLINE, font=("微软雅黑", 9),
             anchor="e", fg=TEXT_SEC, bg=BG,
@@ -296,7 +296,7 @@ class App(tk.Tk):
         try:
             idx = self.notebook.index(self.notebook.select())
             t = self.notebook.tab(idx, "text")
-            if t in ("黑边测量", "生成ASS"):
+            if t == "黑边测量":
                 load_config()
         except Exception:
             pass
@@ -334,18 +334,18 @@ class App(tk.Tk):
         self._task_cancel.clear()
         self.btn_stop.config(state=tk.NORMAL, bg=STOP_RED)
         self.task_progress["value"] = 0
-        self.task_status.set("处理中…")
+        self._task_status_footer.set("")
 
     def _finish_batch_task(self, pct, status):
         self.task_progress["value"] = pct
-        self.task_status.set(status)
+        self._task_status_footer.set(status)
         self.btn_stop.config(state=tk.DISABLED, bg="#ccc")
 
     def stop_task(self):
         if not self._task_busy():
             return
         self._task_cancel.set()
-        self.task_status.set("正在停止…")
+        self._task_status_footer.set("正在停止…")
         self.log_msg("用户请求停止")
 
     def log_msg(self, msg):
