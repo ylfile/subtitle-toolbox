@@ -149,11 +149,11 @@ def ass_output_name(ep, res, orig_srt_name=None, chi_srt_name=None):
 
 
 def _append_info_dialogues(ass_lines, style_info, cx, info_y, info_an):
-    from config import INFO_DIALOGUES as _info
+    from config import INFO_DIALOGUES as _info, INFO_COLOR as _color
     for start, end, text in _info:
         ass_lines.append(
             f"Dialogue: 0,{start},{end},{style_info},,0,0,0,,"
-            f"{{\\an{info_an}\\pos({cx},{info_y})\\c&H077DF6&}}{text}\n"
+            f"{{\\an{info_an}\\pos({cx},{info_y})\\c{_color}}}{text}\n"
         )
 
 
@@ -188,32 +188,50 @@ def _append_watermark_dialogue(ass_lines, playres_x, playres_y):
         pass  # 水印生成失败不影响字幕
 
 
-def _append_bilingual_dialogues(ass_lines, zh, tr, cx, cn_pos, en_pos, style_cn, style_en):
+def _append_bilingual_dialogues(ass_lines, zh, tr, cx, cn_pos, en_pos, style_cn, style_en, info_y=None):
     """中英字幕各自保留原时间轴，分别写入对应位置（不按序号配对）"""
     for z in zh:
         line_text = flatten_subtitle_line(z["text"])
+        # 如果字幕文本含 \an8，使用字幕组信息位置
+        if "\\an8" in line_text and info_y is not None:
+            pos = info_y
+            line_text = line_text.replace("\\an8", "")
+        else:
+            pos = cn_pos
         ass_lines.append(
             f"Dialogue: 0,{ass_time(z['start'])},{ass_time(z['end'])},"
             f"Default,,0,0,0,,"
-            f"{{\\an2\\r{style_cn}\\pos({cx},{cn_pos})}}{line_text}\n"
+            f"{{\\an2\\r{style_cn}\\pos({cx},{pos})}}{line_text}\n"
         )
     for t in tr:
         line_text = flatten_subtitle_line(t["text"])
+        # 如果字幕文本含 \an8，使用字幕组信息位置
+        if "\\an8" in line_text and info_y is not None:
+            pos = info_y
+            line_text = line_text.replace("\\an8", "")
+        else:
+            pos = en_pos
         ass_lines.append(
             f"Dialogue: 0,{ass_time(t['start'])},{ass_time(t['end'])},"
             f"Default,,0,0,0,,"
-            f"{{\\an2\\r{style_en}\\pos({cx},{en_pos})}}{line_text}\n"
+            f"{{\\an2\\r{style_en}\\pos({cx},{pos})}}{line_text}\n"
         )
 
 
-def _append_chinese_only_dialogues(ass_lines, zh, cx, cn_pos, style_cn):
+def _append_chinese_only_dialogues(ass_lines, zh, cx, cn_pos, style_cn, info_y=None):
     """仅中文版：位置与双语模式下的中文行一致（cn_pos）"""
     for z in zh:
         line_text = flatten_subtitle_line(z["text"])
+        # 如果字幕文本含 \an8，使用字幕组信息位置
+        if "\\an8" in line_text and info_y is not None:
+            pos = info_y
+            line_text = line_text.replace("\\an8", "")
+        else:
+            pos = cn_pos
         ass_lines.append(
             f"Dialogue: 0,{ass_time(z['start'])},{ass_time(z['end'])},"
             f"Default,,0,0,0,,"
-            f"{{\\an2\\r{style_cn}\\pos({cx},{cn_pos})}}{line_text}\n"
+            f"{{\\an2\\r{style_cn}\\pos({cx},{pos})}}{line_text}\n"
         )
 
 
@@ -412,10 +430,10 @@ def generate_ass(folder, crop_cfg, log, on_progress=None, progress_state=None, s
         _append_info_dialogues(ass_lines, style_info, cx, info_y, info_an)
 
         if chi_only:
-            _append_chinese_only_dialogues(ass_lines, zh, cx, cn_pos, style_cn)
+            _append_chinese_only_dialogues(ass_lines, zh, cx, cn_pos, style_cn, info_y=info_y)
         else:
             _append_bilingual_dialogues(
-                ass_lines, zh, tr, cx, cn_pos, en_pos, style_cn, style_en
+                ass_lines, zh, tr, cx, cn_pos, en_pos, style_cn, style_en, info_y=info_y
             )
 
         # 水印
@@ -795,6 +813,42 @@ def embed_ass_panel(parent, app):
             info_text.insert(tk.END, f"{start} → {end} → {text}\n")
     _reload_info_text()
 
+    # 颜色选择器
+    from config import INFO_COLOR as cur_color, DEFAULT_INFO_COLOR
+    info_color_var = tk.StringVar(value=cur_color)
+
+    def _ass_to_hex(ass_color):
+        """ASS颜色 &H00BBGGRR& → #RRGGBB"""
+        c = ass_color.replace("&H", "").replace("&", "")
+        if len(c) == 6:
+            bb, gg, rr = c[0:2], c[2:4], c[4:6]
+            return f"#{rr}{gg}{bb}"
+        return "#FF7D06"
+
+    def _hex_to_ass(hex_color):
+        """#RRGGBB → &H00BBGGRR&"""
+        r = hex_color[1:3]
+        g = hex_color[3:5]
+        b = hex_color[5:7]
+        return f"&H00{b}{g}{r}&"
+
+    def _pick_info_color():
+        from tkinter import colorchooser
+        current_hex = _ass_to_hex(info_color_var.get())
+        result = colorchooser.askcolor(color=current_hex, title="选择字幕组信息颜色")
+        if result and result[1]:
+            info_color_var.set(_hex_to_ass(result[1]))
+
+    color_row = tk.Frame(info_label_frame, bg="#ffffff")
+    color_row.pack(fill=tk.X, pady=(2, 0))
+    tk.Label(color_row, text="信息颜色：", font=("微软雅黑", 8), fg="#7f8c8d", bg="#ffffff").pack(side=tk.LEFT)
+    tk.Label(color_row, textvariable=info_color_var, font=("Consolas", 8),
+             fg="#2c3e50", bg="#ffffff", width=14).pack(side=tk.LEFT, padx=(2, 4))
+    tk.Button(color_row, text="选择颜色", command=_pick_info_color,
+              font=("微软雅黑", 8), fg="#2d6cc9", bg="#eaf1fd",
+              activebackground="#2d6cc9", activeforeground="white",
+              bd=0, padx=6, cursor="hand2").pack(side=tk.LEFT)
+
     info_btn_row = tk.Frame(info_label_frame, bg="#ffffff")
     info_btn_row.pack(fill=tk.X, pady=(2, 0))
 
@@ -813,9 +867,12 @@ def embed_ass_panel(parent, app):
         if not new_list:
             log("⚠️ 字幕组信息为空，使用默认")
             new_list = list(DEFAULT_INFO_DIALOGUES)
-        from config import INFO_DIALOGUES as info_var
+        from config import INFO_DIALOGUES as info_var, INFO_COLOR as color_var
         info_var.clear()
         info_var.extend(new_list)
+        color_var = info_color_var.get()
+        import config
+        config.INFO_COLOR = color_var
         save_config()
         log(f"✅ 字幕组信息已保存（{len(new_list)} 条）")
 

@@ -40,6 +40,9 @@ DEFAULT_INFO_DIALOGUES = [
     ("0:01:05.16", "0:01:08.16", "视频仅供学习 禁止商用"),
 ]
 
+# 字幕组信息颜色（ASS 格式 BGR，如 &H077DF6& = #F67D07 = 橙色）
+DEFAULT_INFO_COLOR = "&H077DF6&"
+
 
 # 默认水印配置
 DEFAULT_WATERMARK = {
@@ -83,6 +86,7 @@ TOOLS = {
 CROP_TABLE = {}
 SUBTITLE_ROOT = ""
 INFO_DIALOGUES = list(DEFAULT_INFO_DIALOGUES)
+INFO_COLOR = DEFAULT_INFO_COLOR
 WATERMARK_CONFIG = dict(DEFAULT_WATERMARK)
 
 
@@ -91,10 +95,11 @@ def _is_show_key(key):
 
 
 def load_config():
-    global SUBTITLE_ROOT, INFO_DIALOGUES, WATERMARK_CONFIG
+    global SUBTITLE_ROOT, INFO_DIALOGUES, INFO_COLOR, WATERMARK_CONFIG
     CROP_TABLE.clear()
     SUBTITLE_ROOT = ""
     INFO_DIALOGUES = list(DEFAULT_INFO_DIALOGUES)
+    INFO_COLOR = DEFAULT_INFO_COLOR
     WATERMARK_CONFIG = dict(DEFAULT_WATERMARK)
     if not CONFIG_FILE.exists():
         return
@@ -111,6 +116,8 @@ def load_config():
                 INFO_DIALOGUES.clear()
                 for start, end, text in raw_info:
                     INFO_DIALOGUES.append((str(start), str(end), str(text)))
+        if "_info_color" in data:
+            INFO_COLOR = data.pop("_info_color") or DEFAULT_INFO_COLOR
         if META_WATERMARK_KEY in data:
             wm = data.pop(META_WATERMARK_KEY)
             if isinstance(wm, dict):
@@ -126,6 +133,8 @@ def save_config():
     payload = {META_ROOT_KEY: SUBTITLE_ROOT}
     if INFO_DIALOGUES != DEFAULT_INFO_DIALOGUES:
         payload[META_INFO_KEY] = INFO_DIALOGUES
+    if INFO_COLOR != DEFAULT_INFO_COLOR:
+        payload["_info_color"] = INFO_COLOR
     if WATERMARK_CONFIG != DEFAULT_WATERMARK:
         payload[META_WATERMARK_KEY] = WATERMARK_CONFIG
     payload.update(CROP_TABLE)
