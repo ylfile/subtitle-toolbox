@@ -49,13 +49,10 @@ DEFAULT_WATERMARK = {
     "enabled": False,
     "image_path": "",
     "scale": 100,
-    "x": -20,
-    "y": -20,
-    "fade_in_ms": 1000,
-    "fade_out_ms": 1000,
-    "start_time": "0:00:38.00",
-    "end_time": "1:00:00.00",
-    "fade_mode": "simple",
+    "alignment": "top-left",
+    "margin": 10,
+    "appearances": 3,
+    "duration_sec": 30,
 }
 
 

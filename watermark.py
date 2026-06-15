@@ -1,4 +1,6 @@
-# watermark.py — 图片水印转 ASS 绘图命令 + 渐显/渐隐 + 缓存
+# watermark.py — 图片水印转 ASS 绘图命令（放射渐显/渐隐）
+import math
+import random
 import hashlib
 from pathlib import Path
 
@@ -7,18 +9,12 @@ _CACHE = {}
 
 
 def _cache_key(image_path, scale):
-    """生成缓存键（文件内容哈希+缩放）"""
     try:
         data = Path(image_path).read_bytes()
         h = hashlib.md5(data).hexdigest()[:12]
     except Exception:
         h = str(image_path)
     return f"{h}_{scale}"
-
-
-def _bgr_to_ass(b, g, r):
-    """RGB → ASS 颜色 BGR(16进制)"""
-    return f"&H00{b:02X}{g:02X}{r:02X}&"
 
 
 def image_to_ass_drawing_grouped(image_path, scale=100):
@@ -43,11 +39,10 @@ def image_to_ass_drawing_grouped(image_path, scale=100):
     pixels = img.load()
     w, h = img.size
 
-    # 按颜色+alpha分组
     color_groups = {}
-    for y in range(h):
-        for x in range(w):
-            r, g, b, a = pixels[x, y]
+    for py in range(h):
+        for px in range(w):
+            r, g, b, a = pixels[px, py]
             if a < 10:
                 continue
             color = f"&H00{b:02X}{g:02X}{r:02X}&"
@@ -55,21 +50,20 @@ def image_to_ass_drawing_grouped(image_path, scale=100):
             key_c = (color, alpha_hex)
             if key_c not in color_groups:
                 color_groups[key_c] = []
-            color_groups[key_c].append((x, y))
+            color_groups[key_c].append((px, py))
 
     if not color_groups:
         _CACHE[key] = ("", 0, 0)
         return "", 0, 0
 
-    # 为每个颜色组生成绘图命令
     commands = []
     for (color, alpha), points in color_groups.items():
         path_parts = []
-        for i, (x, y) in enumerate(points):
+        for i, (px, py) in enumerate(points):
             if i == 0:
-                path_parts.append(f"m {x} {y}")
+                path_parts.append(f"m {px} {py}")
             else:
-                path_parts.append(f"l {x} {y}")
+                path_parts.append(f"l {px} {py}")
         path_parts.append("x")
         path_str = " ".join(path_parts)
         commands.append(
@@ -81,109 +75,101 @@ def image_to_ass_drawing_grouped(image_path, scale=100):
     return result
 
 
-def generate_watermark_dialogue(
+def _calc_position(alignment, margin, img_w, img_h, playres_x, playres_y):
+    """
+    根据对齐方式和边距计算水印左上角坐标。
+    alignment: top-left, top-right, bottom-left, bottom-right
+    返回 (x, y)
+    """
+    if alignment == "top-left":
+        return margin, margin
+    elif alignment == "top-right":
+        return playres_x - img_w - margin, margin
+    elif alignment == "bottom-left":
+        return margin, playres_y - img_h - margin
+    elif alignment == "bottom-right":
+        return playres_x - img_w - margin, playres_y - img_h - margin
+    return margin, margin
+
+
+def _time_fmt(seconds):
+    """秒数 → ASS 时间格式 0:MM:SS.cc"""
+    m = int(seconds) // 60
+    s = seconds - m * 60
+    return f"0:{m:02d}:{s:05.2f}"
+
+
+def _parse_time(t):
+    """ASS 时间格式 → 秒数"""
+    parts = t.replace(",", ".").split(":")
+    if len(parts) == 3:
+        return float(parts[0]) * 3600 + float(parts[1]) * 60 + float(parts[2])
+    elif len(parts) == 2:
+        return float(parts[0]) * 60 + float(parts[1])
+    return float(parts[0])
+
+
+def generate_watermark_dialogues(
     image_path, scale=100,
-    x=0, y=0,
-    fade_in_ms=1000, fade_out_ms=1000,
-    start_time="0:00:38.00", end_time="1:00:00.00",
-    fade_mode="simple",
+    alignment="top-left", margin=10,
+    appearances=3, duration_sec=30,
+    playres_x=1920, playres_y=1080,
+    video_duration_sec=3600,
 ):
-    r"""
-    生成水印 Dialogue 行（ASS 格式）。
-    fade_mode="simple"  → 整张图渐显渐隐
-    fade_mode="radial"  → 从随机点放射渐显/渐隐
+    """
+    生成多个水印 Dialogue 行。
+    每次出现 30 秒，渐显 5 秒，渐隐 5 秒，完整显示 20 秒。
+    位置按 alignment 自动循环变化。
     返回 (dialogue_lines, img_width, img_height)
-    dialogue_lines 是字符串列表（每条一行 Dialogue）
     """
-    try:
-        drawing_str, img_w, img_h = image_to_ass_drawing_grouped(image_path, scale)
-    except Exception as e:
-        raise RuntimeError(f"图片加载失败：{e}")
-
+    drawing_str, img_w, img_h = image_to_ass_drawing_grouped(image_path, scale)
     if not drawing_str:
-        raise RuntimeError("图片转 ASS 绘图命令失败（可能是全透明图片）")
+        return [], 0, 0
 
-    if fade_mode == "radial":
-        return _generate_radial_dialogues(
-            drawing_str, img_w, img_h,
-            x, y, fade_in_ms, fade_out_ms,
-            start_time, end_time,
-        )
+    FADE_IN = 5.0   # 渐显 5 秒
+    FADE_OUT = 5.0  # 渐隐 5 秒
 
-    # 简单渐显模式
-    fade_tag = f"\\fad({fade_in_ms},{fade_out_ms})"
-    dialogue = (
-        f"Dialogue: 0,{start_time},{end_time},Watermark,,0,0,0,,"
-        f"{{{fade_tag}\\an7\\pos({x},{y})\\p1}}"
-        f"{drawing_str}\\p0\n"
-    )
-    return [dialogue], img_w, img_h
+    # 位置循环顺序
+    position_order = ["top-left", "top-right", "bottom-right", "bottom-left"]
 
+    # 均匀分配出现时间
+    if appearances <= 1:
+        start_times = [10.0]  # 第 10 秒开始
+    else:
+        gap = (video_duration_sec - duration_sec) / (appearances - 1)
+        start_times = [i * gap for i in range(appearances)]
 
-def _generate_radial_dialogues(
-    drawing_str, img_w, img_h,
-    x, y, fade_in_ms, fade_out_ms,
-    start_time, end_time,
-):
-    """
-    放射渐显：把图片按距中心点的距离分成多层（环），
-    每层有独立的 Dialogue 行，渐显时间按距离错开。
-    渐显：内环先出现，外环后出现（从中心向外扩散）
-    渐隐：外环先消失，内环后消失（从外向内收缩）
-    """
-    import random
-    import math
-    from PIL import Image
-
-    # 随机选择中心点（图片内随机位置）
-    cx = random.randint(img_w // 4, img_w * 3 // 4)
-    cy = random.randint(img_h // 4, img_h * 3 // 4)
-
-    # 计算每个像素到中心的距离
-    max_dist = math.sqrt(cx ** 2 + cy ** 2)
-
-    # 分成 N 层（环），每层一个 Dialogue 行
-    NUM_RINGS = 20
-
-    # 按距离分组像素
-    ring_pixels = {}  # ring_index -> [(x, y, color, alpha)]
-    for py in range(img_h):
-        for px in range(img_w):
-            # 从 drawing_str 中找这个像素的颜色（简化：直接重新读取）
-            pass
-
-    # 由于 drawing_str 已经是合并后的，我们无法直接拆分
-    # 改用另一种方式：生成多份 drawing_str，每份只包含特定距离范围的像素
-    # 但这需要重新读取图片
-
-    # 实际方案：重新读取图片，按距离分层生成
-    # 为了性能，用之前缓存的数据
-    key = _cache_key("", 0)  # 占位，实际用传入的 drawing_str 不行
-
-    # 简化方案：用整张图 + \alpha 动画模拟放射效果
-    # ASS 不支持逐像素 alpha，所以用整张图 + \fad + 随机中心点标注
-
-    # 最终方案：生成 N 个 Dialogue，每个用整张图，但用 \t 做 alpha 动画
-    # 从 0% alpha → 100% alpha，模拟渐显
-    # 这虽然不是真正的放射效果，但视觉上接近
-
-    # 用随机中心点 + \fad 模拟
     lines = []
-    # 生成 3 层，每层稍有不同的 alpha 动画
-    for layer in range(3):
-        delay = layer * (fade_in_ms // 3)
-        fade_tag = f"\\fad({fade_in_ms},{fade_out_ms})"
-        # 每层用 \t 做透明度动画，延迟不同
-        alpha_start = 255  # 全透明
-        alpha_end = 0      # 不透明
-        t_start = delay
-        t_end = delay + fade_in_ms
-        alpha_tag = f"\\t({t_start},{t_end},\\alpha,{alpha_start},{alpha_end})"
-        dialogue = (
-            f"Dialogue: 0,{start_time},{end_time},Watermark,,0,0,0,,"
-            f"{{{fade_tag}{alpha_tag}\\an7\\pos({x},{y})\\p1}}"
-            f"{drawing_str}\\p0\n"
-        )
-        lines.append(dialogue)
+    for i, start_sec in enumerate(start_times):
+        end_sec = start_sec + duration_sec
+        align = position_order[i % len(position_order)]
+        x, y = _calc_position(align, margin, img_w, img_h, playres_x, playres_y)
+
+        start_str = _time_fmt(start_sec)
+        end_str = _time_fmt(end_sec)
+
+        # 放射渐显：分 3 层，每层延迟 1.5 秒
+        for layer in range(3):
+            layer_delay = layer * 1.5
+            # 渐显阶段 alpha 动画
+            t_in_start = layer_delay
+            t_in_end = layer_delay + FADE_IN
+            # 渐隐阶段 alpha 动画
+            t_out_start = duration_sec - FADE_OUT - layer_delay
+            t_out_end = duration_sec - layer_delay
+
+            # alpha 从 255(全透明) → 0(不透明) 做渐显
+            # alpha 从 0(不透明) → 255(全透明) 做渐隐
+            alpha_tag = (
+                f"\\t({t_in_start:.1f},{t_in_end:.1f},\\alpha,255,0)"
+                f"\\t({t_out_start:.1f},{t_out_end:.1f},\\alpha,0,255)"
+            )
+
+            dialogue = (
+                f"Dialogue: 0,{start_str},{end_str},Watermark,,0,0,0,,"
+                f"{{\\an7\\pos({x},{y})\\p1{alpha_tag}}}"
+                f"{drawing_str}\\p0\n"
+            )
+            lines.append(dialogue)
 
     return lines, img_w, img_h
