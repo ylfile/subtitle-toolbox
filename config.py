@@ -28,6 +28,7 @@ _BUNDLE_DIR = _bundle_dir()
 CONFIG_FILE = _APP_DIR / "config.json"
 META_ROOT_KEY = "_subtitle_root"
 META_INFO_KEY = "_info_dialogues"
+META_WATERMARK_KEY = "_watermark"
 
 
 # 默认字幕组信息
@@ -38,6 +39,20 @@ DEFAULT_INFO_DIALOGUES = [
     ("0:00:58.16", "0:01:02.16", "更多内容：https://ylfile.com"),
     ("0:01:05.16", "0:01:08.16", "视频仅供学习 禁止商用"),
 ]
+
+
+# 默认水印配置
+DEFAULT_WATERMARK = {
+    "enabled": False,
+    "image_path": "",
+    "scale": 100,
+    "x": -20,
+    "y": -20,
+    "fade_in_ms": 1000,
+    "fade_out_ms": 1000,
+    "start_time": "0:00:38.00",
+    "end_time": "1:00:00.00",
+}
 
 
 def _resource_roots():
@@ -68,6 +83,7 @@ TOOLS = {
 CROP_TABLE = {}
 SUBTITLE_ROOT = ""
 INFO_DIALOGUES = list(DEFAULT_INFO_DIALOGUES)
+WATERMARK_CONFIG = dict(DEFAULT_WATERMARK)
 
 
 def _is_show_key(key):
@@ -75,10 +91,11 @@ def _is_show_key(key):
 
 
 def load_config():
-    global SUBTITLE_ROOT, INFO_DIALOGUES
+    global SUBTITLE_ROOT, INFO_DIALOGUES, WATERMARK_CONFIG
     CROP_TABLE.clear()
     SUBTITLE_ROOT = ""
     INFO_DIALOGUES = list(DEFAULT_INFO_DIALOGUES)
+    WATERMARK_CONFIG = dict(DEFAULT_WATERMARK)
     if not CONFIG_FILE.exists():
         return
     try:
@@ -94,6 +111,10 @@ def load_config():
                 INFO_DIALOGUES.clear()
                 for start, end, text in raw_info:
                     INFO_DIALOGUES.append((str(start), str(end), str(text)))
+        if META_WATERMARK_KEY in data:
+            wm = data.pop(META_WATERMARK_KEY)
+            if isinstance(wm, dict):
+                WATERMARK_CONFIG.update(wm)
         for k, v in data.items():
             if _is_show_key(k) and isinstance(v, dict):
                 CROP_TABLE[k] = v
@@ -105,6 +126,8 @@ def save_config():
     payload = {META_ROOT_KEY: SUBTITLE_ROOT}
     if INFO_DIALOGUES != DEFAULT_INFO_DIALOGUES:
         payload[META_INFO_KEY] = INFO_DIALOGUES
+    if WATERMARK_CONFIG != DEFAULT_WATERMARK:
+        payload[META_WATERMARK_KEY] = WATERMARK_CONFIG
     payload.update(CROP_TABLE)
     CONFIG_FILE.write_text(
         json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"

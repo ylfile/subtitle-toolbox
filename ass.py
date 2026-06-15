@@ -92,6 +92,9 @@ def build_ass_header(playres_x, playres_y):
         "Style: InfoSUB,Arial,50,"
         "&H00FFFFFF,&H000000FF,&H00000000,&H00000000,"
         "0,0,0,0,100,100,0,0,1,0,0,8,10,10,0,1\n"
+        "Style: Watermark,Arial,1,"
+        "&H00FFFFFF,&H000000FF,&H00000000,&H00000000,"
+        "0,0,0,0,100,100,0,0,1,0,0,7,0,0,0,1\n"
         "\n"
         "[Events]\n"
         "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
@@ -152,6 +155,37 @@ def _append_info_dialogues(ass_lines, style_info, cx, info_y, info_an):
             f"Dialogue: 0,{start},{end},{style_info},,0,0,0,,"
             f"{{\\an{info_an}\\pos({cx},{info_y})\\c&H077DF6&}}{text}\n"
         )
+
+
+def _append_watermark_dialogue(ass_lines, playres_x, playres_y):
+    """如果水印配置启用且图片存在，追加水印 Dialogue 行"""
+    from config import WATERMARK_CONFIG as wm
+    if not wm.get("enabled"):
+        return
+    img_path = wm.get("image_path", "")
+    if not img_path or not Path(img_path).is_file():
+        return
+    try:
+        from watermark import generate_watermark_dialogue
+        # 计算位置（负数表示从右下角偏移）
+        x = wm.get("x", -20)
+        y = wm.get("y", -20)
+        if x < 0:
+            x = playres_x + x  # 负数 = 从右往左偏
+        if y < 0:
+            y = playres_y + y  # 负数 = 从下往上偏
+        dialogue, img_w, img_h = generate_watermark_dialogue(
+            img_path,
+            scale=wm.get("scale", 100),
+            x=x, y=y,
+            fade_in_ms=wm.get("fade_in_ms", 1000),
+            fade_out_ms=wm.get("fade_out_ms", 1000),
+            start_time=wm.get("start_time", "0:00:38.00"),
+            end_time=wm.get("end_time", "1:00:00.00"),
+        )
+        ass_lines.append(dialogue)
+    except Exception:
+        pass  # 水印生成失败不影响字幕
 
 
 def _append_bilingual_dialogues(ass_lines, zh, tr, cx, cn_pos, en_pos, style_cn, style_en):
@@ -383,6 +417,9 @@ def generate_ass(folder, crop_cfg, log, on_progress=None, progress_state=None, s
             _append_bilingual_dialogues(
                 ass_lines, zh, tr, cx, cn_pos, en_pos, style_cn, style_en
             )
+
+        # 水印
+        _append_watermark_dialogue(ass_lines, playres_x, playres_y)
 
         errors = self_check(ass_lines)
         if errors:
@@ -797,6 +834,112 @@ def embed_ass_panel(parent, app):
               activebackground="#1e8449", bd=0, padx=10, pady=1, cursor="hand2").pack(side=tk.LEFT)
     tk.Label(info_btn_row, text="  修改后需点保存，下次生成ASS时生效", bg="#ffffff",
              font=("微软雅黑", 8), fg="#bdc3c7").pack(side=tk.LEFT)
+
+    # ---- 图片水印配置 ----
+    from config import WATERMARK_CONFIG as wm_cfg, DEFAULT_WATERMARK as wm_default
+    wm_enabled_var = tk.BooleanVar(value=wm_cfg.get("enabled", False))
+    wm_image_var = tk.StringVar(value=wm_cfg.get("image_path", ""))
+    wm_scale_var = tk.StringVar(value=str(wm_cfg.get("scale", 100)))
+    wm_x_var = tk.StringVar(value=str(wm_cfg.get("x", -20)))
+    wm_y_var = tk.StringVar(value=str(wm_cfg.get("y", -20)))
+    wm_fadein_var = tk.StringVar(value=str(wm_cfg.get("fade_in_ms", 1000)))
+    wm_fadeout_var = tk.StringVar(value=str(wm_cfg.get("fade_out_ms", 1000)))
+    wm_start_var = tk.StringVar(value=wm_cfg.get("start_time", "0:00:38.00"))
+    wm_end_var = tk.StringVar(value=wm_cfg.get("end_time", "1:00:00.00"))
+
+    wm_frame = tk.LabelFrame(parent, text="图片水印（可选）",
+                             font=("微软雅黑", 9, "bold"),
+                             fg="#2c3e50", bg="#ffffff",
+                             relief="solid", bd=1, padx=8, pady=4)
+    wm_frame.pack(fill=tk.X, padx=10, pady=(4, 2))
+
+    # 第一行：启用 + 图片路径
+    wm_row1 = tk.Frame(wm_frame, bg="#ffffff")
+    wm_row1.pack(fill=tk.X, pady=(0, 2))
+    tk.Checkbutton(wm_row1, text="启用水印", variable=wm_enabled_var,
+                   font=("微软雅黑", 9), fg="#27ae60", selectcolor="#ffffff",
+                   activebackground="#ffffff").pack(side=tk.LEFT)
+    tk.Label(wm_row1, text="  图片：", font=("微软雅黑", 9), fg="#7f8c8d", bg="#ffffff").pack(side=tk.LEFT)
+    tk.Entry(wm_row1, textvariable=wm_image_var, font=("Consolas", 9),
+             fg="#2c3e50", bg="#f9faff", relief="solid", bd=1).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(4, 4))
+
+    def _browse_wm_image():
+        from tkinter import filedialog
+        p = filedialog.askopenfilename(
+            filetypes=[("图片文件", "*.png *.jpg *.jpeg *.bmp *.gif")])
+        if p:
+            wm_image_var.set(p)
+    tk.Button(wm_row1, text="浏览", command=_browse_wm_image,
+              font=("微软雅黑", 8), fg="#2d6cc9", bg="#eaf1fd",
+              activebackground="#2d6cc9", activeforeground="white",
+              bd=0, padx=6, cursor="hand2").pack(side=tk.LEFT)
+
+    # 第二行：缩放 + 位置
+    wm_row2 = tk.Frame(wm_frame, bg="#ffffff")
+    wm_row2.pack(fill=tk.X, pady=(0, 2))
+    tk.Label(wm_row2, text="缩放%", font=("微软雅黑", 8), fg="#7f8c8d", bg="#ffffff").pack(side=tk.LEFT)
+    tk.Entry(wm_row2, textvariable=wm_scale_var, width=5,
+             font=("Consolas", 8), fg="#2c3e50", bg="#f9faff", relief="solid", bd=1).pack(side=tk.LEFT, padx=(2, 8))
+    tk.Label(wm_row2, text="X", font=("微软雅黑", 8), fg="#7f8c8d", bg="#ffffff").pack(side=tk.LEFT)
+    tk.Entry(wm_row2, textvariable=wm_x_var, width=6,
+             font=("Consolas", 8), fg="#2c3e50", bg="#f9faff", relief="solid", bd=1).pack(side=tk.LEFT, padx=(2, 8))
+    tk.Label(wm_row2, text="Y", font=("微软雅黑", 8), fg="#7f8c8d", bg="#ffffff").pack(side=tk.LEFT)
+    tk.Entry(wm_row2, textvariable=wm_y_var, width=6,
+             font=("Consolas", 8), fg="#2c3e50", bg="#f9faff", relief="solid", bd=1).pack(side=tk.LEFT, padx=(2, 8))
+    tk.Label(wm_row2, text="渐显ms", font=("微软雅黑", 8), fg="#7f8c8d", bg="#ffffff").pack(side=tk.LEFT)
+    tk.Entry(wm_row2, textvariable=wm_fadein_var, width=5,
+             font=("Consolas", 8), fg="#2c3e50", bg="#f9faff", relief="solid", bd=1).pack(side=tk.LEFT, padx=(2, 8))
+    tk.Label(wm_row2, text="渐隐ms", font=("微软雅黑", 8), fg="#7f8c8d", bg="#ffffff").pack(side=tk.LEFT)
+    tk.Entry(wm_row2, textvariable=wm_fadeout_var, width=5,
+             font=("Consolas", 8), fg="#2c3e50", bg="#f9faff", relief="solid", bd=1).pack(side=tk.LEFT, padx=(2, 0))
+
+    # 第三行：时间范围 + 保存按钮
+    wm_row3 = tk.Frame(wm_frame, bg="#ffffff")
+    wm_row3.pack(fill=tk.X)
+    tk.Label(wm_row3, text="起始", font=("微软雅黑", 8), fg="#7f8c8d", bg="#ffffff").pack(side=tk.LEFT)
+    tk.Entry(wm_row3, textvariable=wm_start_var, width=12,
+             font=("Consolas", 8), fg="#2c3e50", bg="#f9faff", relief="solid", bd=1).pack(side=tk.LEFT, padx=(2, 8))
+    tk.Label(wm_row3, text="结束", font=("微软雅黑", 8), fg="#7f8c8d", bg="#ffffff").pack(side=tk.LEFT)
+    tk.Entry(wm_row3, textvariable=wm_end_var, width=12,
+             font=("Consolas", 8), fg="#2c3e50", bg="#f9faff", relief="solid", bd=1).pack(side=tk.LEFT, padx=(2, 8))
+
+    def _save_wm_inline():
+        from config import WATERMARK_CONFIG as wm_var, save_config
+        wm_var["enabled"] = wm_enabled_var.get()
+        wm_var["image_path"] = wm_image_var.get()
+        try: wm_var["scale"] = int(wm_scale_var.get())
+        except: wm_var["scale"] = 100
+        try: wm_var["x"] = int(wm_x_var.get())
+        except: wm_var["x"] = -20
+        try: wm_var["y"] = int(wm_y_var.get())
+        except: wm_var["y"] = -20
+        try: wm_var["fade_in_ms"] = int(wm_fadein_var.get())
+        except: wm_var["fade_in_ms"] = 1000
+        try: wm_var["fade_out_ms"] = int(wm_fadeout_var.get())
+        except: wm_var["fade_out_ms"] = 1000
+        wm_var["start_time"] = wm_start_var.get()
+        wm_var["end_time"] = wm_end_var.get()
+        save_config()
+        log(f"✅ 水印配置已保存")
+
+    def _reset_wm_inline():
+        wm_enabled_var.set(wm_default["enabled"])
+        wm_image_var.set(wm_default["image_path"])
+        wm_scale_var.set(str(wm_default["scale"]))
+        wm_x_var.set(str(wm_default["x"]))
+        wm_y_var.set(str(wm_default["y"]))
+        wm_fadein_var.set(str(wm_default["fade_in_ms"]))
+        wm_fadeout_var.set(str(wm_default["fade_out_ms"]))
+        wm_start_var.set(wm_default["start_time"])
+        wm_end_var.set(wm_default["end_time"])
+        _save_wm_inline()
+
+    tk.Button(wm_row3, text="恢复默认", command=_reset_wm_inline,
+              font=("微软雅黑", 8), fg="#7f8c8d", bg="#e0e3eb",
+              activebackground="#bdc3c7", bd=0, padx=6, cursor="hand2").pack(side=tk.RIGHT)
+    tk.Button(wm_row3, text="保存", command=_save_wm_inline,
+              font=("微软雅黑", 8, "bold"), fg="white", bg="#27ae60",
+              activebackground="#1e8449", bd=0, padx=8, cursor="hand2").pack(side=tk.RIGHT, padx=(0, 4))
 
     # 提示栏（进度/状态）
     status_var = tk.StringVar(value="")
