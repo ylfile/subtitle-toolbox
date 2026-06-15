@@ -24,15 +24,6 @@ from utils import (
     playres_from_crop_cfg,
 )
 
-# 字幕组信息：每条独立时间段，蓝色 + \\an5 顶对齐定位
-INFO_DIALOGUES = [
-    ("0:00:38.16", "0:00:40.16", "字幕来源：官方"),
-    ("0:00:42.16", "0:00:45.16", "压制&校对：有料视界"),
-    ("0:00:49.16", "0:00:54.16", "微博：YLFile"),
-    ("0:00:58.16", "0:01:02.16", "更多内容：https://ylfile.com"),
-    ("0:01:05.16", "0:01:08.16", "视频仅供学习 禁止商用"),
-]
-
 
 def parse_srt(path, is_chinese=False):
     with open(path, "r", encoding="utf-8") as f:
@@ -155,7 +146,8 @@ def ass_output_name(ep, res, orig_srt_name=None, chi_srt_name=None):
 
 
 def _append_info_dialogues(ass_lines, style_info, cx, info_y, info_an):
-    for start, end, text in INFO_DIALOGUES:
+    from config import INFO_DIALOGUES as _info
+    for start, end, text in _info:
         ass_lines.append(
             f"Dialogue: 0,{start},{end},{style_info},,0,0,0,,"
             f"{{\\an{info_an}\\pos({cx},{info_y})\\c&H077DF6&}}{text}\n"
@@ -233,7 +225,7 @@ def count_ass_jobs(show_dirs, is_measured):
     """统计可生成 ASS 的字幕文件数"""
     total = 0
     for sub in show_dirs:
-        if not is_measured(str(sub)):
+        if not is_measured(sub.name):
             continue
         pairs = collect_subtitle_pairs(sub)
         total += sum(1 for _ in pairs)
@@ -433,14 +425,14 @@ def embed_ass_panel(parent, app):
     from config import SUBTITLE_ROOT, is_measured, set_subtitle_root
 
     dlg_parent = app if app else parent.winfo_toplevel()
-    state = {"root_path": SUBTITLE_ROOT or (app.subtitle_root if app else "") or ""}
+    state = {"root_path": app.subtitle_root if app else SUBTITLE_ROOT or ""}
 
     def log(msg):
         if app:
             app.log_msg(msg)
 
     def refresh_stats():
-        path = state["root_path"].strip()
+        path = app.subtitle_root if app else ""
         if not path or not Path(path).is_dir():
             stats_var.set("请先选择字幕根目录")
             return
@@ -458,27 +450,15 @@ def embed_ass_panel(parent, app):
             f"可生成 {ass_total} 个 ASS"
         )
 
+    # browse_root 已废弃（全局目录栏接管），保留桩函数避免 AttributeError
     def browse_root():
-        path = filedialog.askdirectory(
-            initialdir=state["root_path"] or None,
-            parent=dlg_parent,
-        )
-        if not path:
-            return
-        state["root_path"] = path
-        root_var.set(path)
-        set_subtitle_root(path)
-        if app:
-            app.subtitle_root = path
-        refresh_stats()
-        log(f"📁 字幕根目录：{path}")
+        pass
 
     def require_root():
-        path = root_var.get().strip()
+        path = app.subtitle_root if app else ""
         if not path or not Path(path).is_dir():
-            messagebox.showwarning("提示", "请先选择有效的字幕根目录", parent=dlg_parent)
+            messagebox.showwarning("提示", "请先在顶部全局目录栏选择有效的字幕根目录", parent=dlg_parent)
             return None
-        state["root_path"] = path
         return Path(path)
 
     def run_generate_ass():
@@ -487,6 +467,8 @@ def embed_ass_panel(parent, app):
         selected = require_root()
         if not selected:
             return
+
+        do_fix = fix_var.get()  # 是否生成后自动转换格式
 
         from utils import iter_show_dirs_with_mkv as _iter_shows
 
@@ -515,7 +497,9 @@ def embed_ass_panel(parent, app):
         if not messagebox.askyesno(
             "批量生成 ASS",
             f"将对 {len(shows)} 部剧中的 {job_total} 个字幕生成 ASS。\n"
-            "未测量黑边的剧集将被跳过。\n\n是否继续？",
+            "未测量黑边的剧集将被跳过。\n"
+            + ("生成后自动转换 Aegisub 格式（修复重叠）。\n" if do_fix else "")
+            + "\n是否继续？",
             parent=dlg_parent,
         ):
             return
@@ -563,6 +547,26 @@ def embed_ass_panel(parent, app):
                     summary = f"生成 ASS 完成：成功 {ok} 个，失败 {fail}"
                 if app:
                     app._log_threadsafe(f"\n🎉 {summary}")
+
+                # ---- 生成完毕后自动执行格式转换（修复字幕重叠） ----
+                if do_fix and not (app and app._task_cancel.is_set()):
+                    try:
+                        from fix_ass import fix_ass_file, find_ass_files
+                        ass_files = find_ass_files(str(selected))
+                        if ass_files:
+                            fixed = 0
+                            for f in ass_files:
+                                if app._task_cancel.is_set():
+                                    break
+                                if fix_ass_file(f):
+                                    fixed += 1
+                            app._log_threadsafe(
+                                f"🔄 格式转换完成：{fixed}/{len(ass_files)} 个 ASS 已转 Aegisub 格式"
+                            )
+                    except Exception as fix_e:
+                        app._log_threadsafe(f"⚠️ 格式转换步骤异常：{fix_e}")
+
+                if app:
                     app.after(0, lambda s=summary: app._finish_batch_task(100, s))
                     app.after(0, refresh_stats)
                 else:
@@ -658,20 +662,54 @@ def embed_ass_panel(parent, app):
     def run_delete_chi():
         _run_delete_srt("chi")
 
-    # ========== UI 控件 ==========
+    def run_fix_ass_solo():
+        """单独执行 ASS 格式转换"""
+        if app and app._warn_if_busy(dlg_parent):
+            return
+        selected = require_root()
+        if not selected:
+            return
 
-    # 第一行：根目录选择
-    root_row = tk.Frame(parent)
-    root_row.pack(fill=tk.X, padx=10, pady=8)
-    tk.Label(root_row, text="字幕根目录：", font=("微软雅黑", 10), fg="#7f8c8d").pack(side=tk.LEFT)
-    root_var = tk.StringVar(value=state["root_path"])
-    tk.Entry(root_row, textvariable=root_var, font=("微软雅黑", 10), fg="#2c3e50",
-             relief="solid", bd=1, highlightcolor="#2d6cc9", highlightthickness=1,
-             bg="#f9faff").pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(8, 8), ipady=3)
-    tk.Button(root_row, text="浏览", command=browse_root,
-              font=("微软雅黑", 9), fg="#2d6cc9", bg="#eaf1fd",
-              activebackground="#2d6cc9", activeforeground="white",
-              bd=0, padx=14, pady=2, cursor="hand2").pack(side=tk.LEFT)
+        from fix_ass import find_ass_files, batch_fix_ass_files
+
+        files = find_ass_files(str(selected))
+        if not files:
+            log("❌ 未找到任何 .ass 文件")
+            return
+
+        if not messagebox.askyesno(
+            "转换 ASS 格式",
+            f"将用 pysubs2 处理 {len(files)} 个 .ass 文件，\n"
+            "效果等同 Aegisub 打开再保存。\n\n是否继续？",
+            parent=dlg_parent,
+        ):
+            return
+
+        app._generating_ass = True
+        app._begin_batch_task(f"转换 {len(files)} 个 ASS 格式…")
+
+        def worker():
+            try:
+                ok, fail = batch_fix_ass_files(
+                    str(selected),
+                    log=app._log_threadsafe,
+                    on_progress=app._progress_callback,
+                    should_cancel=app._task_cancel.is_set if app else None,
+                )
+                cancelled = app._task_cancel.is_set()
+                summary = f"已停止：成功 {ok} 个，失败 {fail}" if cancelled else f"完成：成功 {ok} 个，失败 {fail}"
+                app._log_threadsafe(f"\n🎉 转换 ASS 格式{summary}")
+                app.after(0, lambda: app._finish_batch_task(100, summary))
+            except Exception as e:
+                err = f"❌ 转换异常：{e}"
+                app._log_threadsafe(err)
+                app.after(0, lambda: app._finish_batch_task(0, f"出错：{err}"))
+            finally:
+                app._generating_ass = False
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    # ========== UI 控件 ==========
 
     # 说明
     tk.Label(
@@ -687,6 +725,78 @@ def embed_ass_panel(parent, app):
              font=("微软雅黑", 10, "bold")).pack(
         fill=tk.X, padx=10, pady=(0, 8)
     )
+
+    # 生成后自动转换 Aegisub 格式（复选框）
+    fix_var = tk.BooleanVar(value=True)
+    fix_cb = tk.Frame(parent)
+    fix_cb.pack(fill=tk.X, padx=10, pady=(0, 4))
+    tk.Checkbutton(
+        fix_cb, text="生成后自动转换为 Aegisub 格式（修复字幕重叠）",
+        variable=fix_var, font=("微软雅黑", 9),
+        fg="#27ae60", selectcolor="#ffffff",
+        activebackground="#f5f6fa",
+    ).pack(side=tk.LEFT)
+
+    # 字幕组信息（内联编辑区）
+    info_label_frame = tk.LabelFrame(parent, text="字幕组信息（时间 → 结束 → 文字）",
+                                     font=("微软雅黑", 9, "bold"),
+                                     fg="#2c3e50", bg="#ffffff",
+                                     relief="solid", bd=1, padx=8, pady=4)
+    info_label_frame.pack(fill=tk.X, padx=10, pady=(4, 2))
+
+    info_text = tk.Text(info_label_frame, font=("Consolas", 10), bg="#f9faff", fg="#2c3e50",
+                        relief="flat", bd=0, padx=6, pady=4, height=5)
+    info_text.pack(fill=tk.X)
+
+    # 加载当前字幕组信息到文本框
+    from config import INFO_DIALOGUES as cur_info, DEFAULT_INFO_DIALOGUES, save_config, load_config
+    def _reload_info_text():
+        info_text.delete("1.0", tk.END)
+        load_config()
+        from config import INFO_DIALOGUES as reloaded
+        for start, end, text in reloaded:
+            info_text.insert(tk.END, f"{start} → {end} → {text}\n")
+    _reload_info_text()
+
+    info_btn_row = tk.Frame(info_label_frame, bg="#ffffff")
+    info_btn_row.pack(fill=tk.X, pady=(2, 0))
+
+    def _save_info_inline():
+        raw = info_text.get("1.0", tk.END).strip()
+        new_list = []
+        for line in raw.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            parts = line.split(" → ", 2)
+            if len(parts) != 3:
+                log(f"⚠️ 字幕组信息格式跳过：{line}")
+                continue
+            new_list.append((parts[0].strip(), parts[1].strip(), parts[2].strip()))
+        if not new_list:
+            log("⚠️ 字幕组信息为空，使用默认")
+            new_list = list(DEFAULT_INFO_DIALOGUES)
+        from config import INFO_DIALOGUES as info_var
+        info_var.clear()
+        info_var.extend(new_list)
+        save_config()
+        log(f"✅ 字幕组信息已保存（{len(new_list)} 条）")
+
+    def _reset_info_inline():
+        info_text.delete("1.0", tk.END)
+        for start, end, text in DEFAULT_INFO_DIALOGUES:
+            info_text.insert(tk.END, f"{start} → {end} → {text}\n")
+        _save_info_inline()
+
+    tk.Button(info_btn_row, text="恢复默认", command=_reset_info_inline,
+              font=("微软雅黑", 8), fg="#7f8c8d", bg="#e0e3eb",
+              activebackground="#bdc3c7", bd=0, padx=8, pady=1, cursor="hand2").pack(side=tk.LEFT)
+    tk.Label(info_btn_row, text="  ", bg="#ffffff").pack(side=tk.LEFT)
+    tk.Button(info_btn_row, text="立即保存", command=_save_info_inline,
+              font=("微软雅黑", 8, "bold"), fg="white", bg="#27ae60",
+              activebackground="#1e8449", bd=0, padx=10, pady=1, cursor="hand2").pack(side=tk.LEFT)
+    tk.Label(info_btn_row, text="  修改后需点保存，下次生成ASS时生效", bg="#ffffff",
+             font=("微软雅黑", 8), fg="#bdc3c7").pack(side=tk.LEFT)
 
     # 提示栏（进度/状态）
     status_var = tk.StringVar(value="")
@@ -710,12 +820,15 @@ def embed_ass_panel(parent, app):
         side=tk.LEFT, padx=(0, 8)
     )
     tk.Button(btn_row, text="删除中文版 srt", command=run_delete_chi, width=14, **_ass_btn_style).pack(
+        side=tk.LEFT, padx=(0, 8)
+    )
+    tk.Button(btn_row, text="转换ASS格式", command=run_fix_ass_solo, width=14, **_ass_btn_style).pack(
         side=tk.LEFT
     )
 
     # 初始统计刷新
-    if state["root_path"]:
-        refresh_stats()
+    if app and app.subtitle_root:
+        parent.after(200, refresh_stats)
 
     return parent
 

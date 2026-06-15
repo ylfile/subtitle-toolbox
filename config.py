@@ -27,6 +27,17 @@ _APP_DIR = _app_dir()
 _BUNDLE_DIR = _bundle_dir()
 CONFIG_FILE = _APP_DIR / "config.json"
 META_ROOT_KEY = "_subtitle_root"
+META_INFO_KEY = "_info_dialogues"
+
+
+# 默认字幕组信息
+DEFAULT_INFO_DIALOGUES = [
+    ("0:00:38.16", "0:00:40.16", "字幕来源：官方"),
+    ("0:00:42.16", "0:00:45.16", "压制&校对：有料视界"),
+    ("0:00:49.16", "0:00:54.16", "微博：YLFile"),
+    ("0:00:58.16", "0:01:02.16", "更多内容：https://ylfile.com"),
+    ("0:01:05.16", "0:01:08.16", "视频仅供学习 禁止商用"),
+]
 
 
 def _resource_roots():
@@ -56,6 +67,7 @@ TOOLS = {
 
 CROP_TABLE = {}
 SUBTITLE_ROOT = ""
+INFO_DIALOGUES = list(DEFAULT_INFO_DIALOGUES)
 
 
 def _is_show_key(key):
@@ -63,9 +75,10 @@ def _is_show_key(key):
 
 
 def load_config():
-    global SUBTITLE_ROOT
+    global SUBTITLE_ROOT, INFO_DIALOGUES
     CROP_TABLE.clear()
     SUBTITLE_ROOT = ""
+    INFO_DIALOGUES = list(DEFAULT_INFO_DIALOGUES)
     if not CONFIG_FILE.exists():
         return
     try:
@@ -73,6 +86,14 @@ def load_config():
         data = json.loads(raw)
         if META_ROOT_KEY in data:
             SUBTITLE_ROOT = data.pop(META_ROOT_KEY) or ""
+        if META_INFO_KEY in data:
+            raw_info = data.pop(META_INFO_KEY)
+            if isinstance(raw_info, list) and all(
+                isinstance(e, list) and len(e) == 3 for e in raw_info
+            ):
+                INFO_DIALOGUES.clear()
+                for start, end, text in raw_info:
+                    INFO_DIALOGUES.append((str(start), str(end), str(text)))
         for k, v in data.items():
             if _is_show_key(k) and isinstance(v, dict):
                 CROP_TABLE[k] = v
@@ -82,6 +103,8 @@ def load_config():
 
 def save_config():
     payload = {META_ROOT_KEY: SUBTITLE_ROOT}
+    if INFO_DIALOGUES != DEFAULT_INFO_DIALOGUES:
+        payload[META_INFO_KEY] = INFO_DIALOGUES
     payload.update(CROP_TABLE)
     CONFIG_FILE.write_text(
         json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"

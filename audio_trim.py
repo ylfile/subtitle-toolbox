@@ -48,16 +48,30 @@ def trim_output_path(mkv: Path) -> Path:
     return mkv.with_name(f"{mkv.stem}{_ORIG_AUDIO_SUFFIX}.mkv")
 
 
-def iter_audio_trim_dirs(selected):
+def iter_audio_trim_dirs(selected, forced_lang=None):
     """
     列出待处理剧集目录：
-    - 文件夹名含中文+英文且能解析末尾语言码
+    - 文件夹名含中文+英文且能解析末尾语言码（自动识别模式）
+    - 用户指定语言时，只要文件夹内有 MKV 即可
     - 支持选根目录（批量）或单部剧文件夹
     """
     selected = Path(selected)
     if not selected.is_dir():
         return []
 
+    # 用户指定了原版语言 → 放宽条件，只要有 MKV 就算
+    if forced_lang:
+        if list(selected.glob("*.mkv")):
+            return [selected]
+        shows = []
+        for child in sorted(selected.iterdir()):
+            if not child.is_dir():
+                continue
+            if any(is_trim_source_mkv(p) for p in child.glob("*.mkv")):
+                shows.append(child)
+        return shows
+
+    # 自动识别模式（原逻辑）
     if list(selected.glob("*.mkv")):
         if folder_eligible_for_audio_trim(selected.name):
             return [selected]
@@ -275,19 +289,21 @@ def batch_trim_audio(
     show_dirs=None,
     delete_original=False,
     should_cancel=None,
+    forced_lang=None,
 ):
     """
     批量去多余音轨。
     show_dirs 可显式传入剧集列表；否则从 root_path 扫描。
+    forced_lang 用户指定原版语言：不为空时覆盖文件夹自动识别。
     返回 (成功, 跳过, 失败, 仅删除原文件数)
     """
-    shows = list(show_dirs) if show_dirs is not None else iter_audio_trim_dirs(root_path)
+    shows = list(show_dirs) if show_dirs is not None else iter_audio_trim_dirs(root_path, forced_lang=forced_lang)
     if not shows:
         return 0, 0, 0, 0
 
     jobs = []
     for show in shows:
-        lang = extract_folder_audio_lang(show.name)
+        lang = forced_lang if forced_lang else extract_folder_audio_lang(show.name)
         for mkv in list_trim_mkvs(show):
             jobs.append((show, mkv, lang))
 
@@ -322,14 +338,14 @@ def batch_trim_audio(
     return ok, skip, fail, deleted
 
 
-def resolve_audio_trim_scope(selected):
+def resolve_audio_trim_scope(selected, forced_lang=None):
     """
     解析用户选择的路径。
     返回 (root, shows, mode_label) 或 (None, [], "") 表示无效。
     mode_label: single | batch
     """
     selected = Path(selected)
-    shows = iter_audio_trim_dirs(selected)
+    shows = iter_audio_trim_dirs(selected, forced_lang=forced_lang)
     if not shows:
         return None, [], ""
 
@@ -344,25 +360,35 @@ def resolve_audio_trim_scope(selected):
 def embed_audio_trim_panel(parent, app):
     """音轨处理面板：批量去多余音轨 + 手动批量删除原 mkv"""
     import tkinter as tk
-    from tkinter import filedialog, messagebox
+    from tkinter import filedialog, messagebox, ttk
 
     from config import SUBTITLE_ROOT, set_subtitle_root
 
     dlg_parent = app if app else parent.winfo_toplevel()
-    state = {"root_path": SUBTITLE_ROOT or (app.subtitle_root if app else "") or ""}
+    state = {"root_path": app.subtitle_root if app else SUBTITLE_ROOT or ""}
+
+    # 变量声明
+    stats_var = tk.StringVar(value="")
+    from utils import COMMON_LANG_OPTIONS as _common_lang
+    _lang_options = list(_common_lang)
+    _lang_var = tk.StringVar(value="自动识别")
 
     def log(msg):
         if app:
             app.log_msg(msg)
 
     def refresh_stats():
-        path = state["root_path"].strip()
+        path = app.subtitle_root if app else ""
+        forced_lang = _get_forced_lang()
         if not path or not Path(path).is_dir():
             stats_var.set("请先选择字幕根目录")
             return
-        shows = iter_audio_trim_dirs(path)
+        shows = iter_audio_trim_dirs(path, forced_lang=forced_lang)
         if not shows:
-            stats_var.set("未找到符合条件的剧集文件夹（须含中文+末尾语言码，如 赌命大翻身tur）")
+            base = "未找到符合条件的剧集文件夹"
+            if not forced_lang:
+                base += "（须含中文+末尾语言码，如 赌命大翻身tur）"
+            stats_var.set(base)
             return
         jobs = count_audio_trim_jobs(shows)
         deletable = count_deletable_original_mkvs(shows)
@@ -370,38 +396,66 @@ def embed_audio_trim_panel(parent, app):
             f"共 {len(shows)} 部剧 · 待去音轨 {jobs} 个 · 可删原 mkv {deletable} 个"
         )
 
-    def browse_root():
-        path = filedialog.askdirectory(
-            initialdir=state["root_path"] or None,
-            parent=dlg_parent,
-        )
-        if not path:
-            return
-        state["root_path"] = path
-        root_var.set(path)
-        set_subtitle_root(path)
-        if app:
-            app.subtitle_root = path
+    def _get_forced_lang():
+        label = _lang_var.get()
+        label = _lang_var.get()
+        for lbl, code in _lang_options:
+            if lbl == label:
+                return code
+        return ""
+
+    def _on_lang_selected(*_):
+        label = _lang_var.get()
+        if label == "自定义…":
+            import tkinter.simpledialog as sd
+            custom = sd.askstring("自定义语言", "输入 ISO 639-2 三字母语言码（如 vie）",
+                                  parent=dlg_parent)
+            if custom and custom.strip():
+                code = custom.strip().lower()
+                display = f"{code.upper()} ({code})"
+                new_options = list(lang_menu["values"])
+                idx = list(new_options).index("自定义…") + 1
+                new_options = list(new_options[:idx]) + [display] + list(new_options[idx:])
+                lang_menu["values"] = new_options
+                _lang_var.set(display)
+                _lang_options.append((display, code))
+            else:
+                _lang_var.set("自动识别")
+
+        # 更新提示文字
+        forced = _get_forced_lang()
+        if forced:
+            hint_label.config(
+                text=f"用户指定原版语言 {forced}，文件夹名不再需要末尾语言码限制。\n"
+                     "先去多余音轨生成 S01E01_原音.mkv，确认无误后再点「批量删除原 MKV」。"
+            )
+        else:
+            hint_label.config(
+                text="自动识别：文件夹名须同时含中文与英文字母，且末尾能识别语言码。\n"
+                     "先去多余音轨生成 S01E01_原音.mkv，确认无误后再点「批量删除原 MKV」。"
+            )
         refresh_stats()
-        log(f"📁 音轨处理根目录：{path}")
 
-    root_row = tk.Frame(parent)
-    root_row.pack(fill=tk.X, padx=10, pady=8)
-    tk.Label(root_row, text="字幕根目录：", font=("微软雅黑",10), fg="#7f8c8d").pack(side=tk.LEFT)
-    root_var = tk.StringVar(value=state["root_path"])
-    tk.Entry(root_row, textvariable=root_var, font=("微软雅黑",10), fg="#2c3e50", relief="solid", bd=1, highlightcolor="#2d6cc9", highlightthickness=1, bg="#f9faff").pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(8,8), ipady=3)
-    tk.Button(root_row, text="浏览", command=browse_root, font=("微软雅黑",9), fg="#2d6cc9", bg="#eaf1fd", activebackground="#2d6cc9", activeforeground="white", bd=0, padx=14, pady=2, cursor="hand2").pack(side=tk.LEFT)
+    lang_row = tk.Frame(parent)
+    lang_row.pack(fill=tk.X, padx=10, pady=(2, 2))
+    tk.Label(lang_row, text="原版语言：", font=("微软雅黑", 10), fg="#7f8c8d").pack(side=tk.LEFT)
+    lang_menu = ttk.Combobox(
+        lang_row, textvariable=_lang_var, font=("微软雅黑", 9),
+        state="readonly", width=20,
+        values=[lbl for lbl, _ in _lang_options],
+    )
+    lang_menu.pack(side=tk.LEFT, padx=(8, 0))
 
-    hint = tk.Label(
+    hint_label = tk.Label(
         parent,
         text=(
-            "处理文件夹名须同时含中文与英文字母，且末尾能识别语言码（如 赌命大翻身tur）。\n"
+            "自动识别：文件夹名须同时含中文与英文字母，且末尾能识别语言码（如 赌命大翻身tur）。\n"
             "先去多余音轨生成 S01E01_原音.mkv，确认无误后再点「批量删除原 MKV」。"
         ),
         justify=tk.LEFT,
         fg="#7f8c8d", font=("微软雅黑", 9),
     )
-    hint.pack(fill=tk.X, padx=10, pady=(0, 6))
+    hint_label.pack(fill=tk.X, padx=10, pady=(0, 6))
 
     stats_var = tk.StringVar(value="")
     tk.Label(parent, textvariable=stats_var, anchor="w", fg="#2d6cc9", font=("微软雅黑", 10, "bold")).pack(
@@ -411,12 +465,15 @@ def embed_audio_trim_panel(parent, app):
     btn_row = tk.Frame(parent)
     btn_row.pack(fill=tk.X, padx=10, pady=4)
 
+    # 最后再绑定 trace 和设默认值（确保所有变量已在作用域内）
+    _lang_var.trace_add("write", _on_lang_selected)
+    lang_menu.current(0)
+
     def require_root():
-        path = root_var.get().strip()
+        path = app.subtitle_root if app else ""
         if not path:
-            messagebox.showwarning("提示", "请先选择字幕根目录", parent=dlg_parent)
+            messagebox.showwarning("提示", "请先在顶部全局目录栏选择有效的字幕根目录", parent=dlg_parent)
             return None
-        state["root_path"] = path
         return Path(path)
 
     def run_trim():
@@ -426,11 +483,12 @@ def embed_audio_trim_panel(parent, app):
         if not selected:
             return
 
-        root, shows, mode = resolve_audio_trim_scope(selected)
+        forced_lang = _get_forced_lang()
+
+        root, shows, mode = resolve_audio_trim_scope(selected, forced_lang=forced_lang)
         if not shows:
             log(
-                f"❌ 未找到符合条件的文件夹：{selected}\n"
-                "   文件夹名须同时含中文与英文字母，且末尾能识别语言码"
+                f"❌ 未找到符合条件的文件夹：{selected}"
             )
             return
 
@@ -475,6 +533,7 @@ def embed_audio_trim_panel(parent, app):
                     show_dirs=shows,
                     delete_original=False,
                     should_cancel=app._task_cancel.is_set if app else None,
+                    forced_lang=forced_lang,
                 )
                 parts = [f"成功 {ok}", f"跳过 {skip}", f"失败 {fail}"]
                 if app and app._task_cancel.is_set():
@@ -573,7 +632,7 @@ def embed_audio_trim_panel(parent, app):
         side=tk.LEFT
     )
 
-    if state["root_path"]:
+    if app and app.subtitle_root:
         refresh_stats()
 
 

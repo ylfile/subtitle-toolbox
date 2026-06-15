@@ -69,7 +69,7 @@ def _select_chinese_track(chi_tracks):
     return None, False
 
 
-def extract_subtitles(mkv, out_dir, log):
+def extract_subtitles(mkv, out_dir, log, forced_lang=None):
     mkv = Path(mkv)
     out_dir = Path(out_dir)
 
@@ -97,7 +97,7 @@ def extract_subtitles(mkv, out_dir, log):
         )
 
     audio_lang = pick_audio_language(
-        audio_tracks, mkv.parent.name, mkv.name, log=log
+        audio_tracks, mkv.parent.name, mkv.name, log=log, forced_lang=forced_lang
     )
     audio_lang = normalize_audio_lang(audio_lang)
     log(f"🎯 原版语言（与所选音轨一致）：{audio_lang}")

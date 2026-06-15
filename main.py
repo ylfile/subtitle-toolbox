@@ -68,13 +68,55 @@ class App(tk.Tk):
                    relief=[("selected", "raised"), ("!selected", "raised")],
         )
 
+        # ---- 顶部全局目录栏 + 进度条 ----
+        top_bar = tk.Frame(self, bg=BG)
+        top_bar.pack(fill=tk.X, padx=16, pady=(10, 2))
+        tk.Label(top_bar, text="📁 根目录：", font=("微软雅黑", 10), fg=TEXT, bg=BG).pack(side=tk.LEFT)
+        self._global_root_var = tk.StringVar(value=self.subtitle_root)
+        self._global_root_entry = tk.Entry(
+            top_bar, textvariable=self._global_root_var, font=("微软雅黑", 10),
+            fg=TEXT, bg="#f9faff", relief="solid", bd=1,
+            highlightcolor=ACCENT, highlightthickness=1,
+        )
+        self._global_root_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(8, 8), ipady=3)
+        self._browse_btn = tk.Button(top_bar, text="浏览", command=self._browse_global_root,
+                  font=("微软雅黑", 9), fg=ACCENT, bg=ACCENT_LIGHT,
+                  activebackground=ACCENT, activeforeground="white",
+                  bd=0, padx=14, pady=2, cursor="hand2")
+        self._browse_btn.pack(side=tk.LEFT)
+
+        # 进度行（与目录栏完全对齐）
+        prog_frame = tk.Frame(self, bg=BG)
+        prog_frame.pack(fill=tk.X, padx=16, pady=(2, 0))
+
+        self.task_status = tk.StringVar(value="就  绪")
+        tk.Label(
+            prog_frame, textvariable=self.task_status, font=("微软雅黑", 10),
+            fg=TEXT, bg=BG, anchor="w", width=9,
+        ).pack(side=tk.LEFT)
+
+        self.task_progress = ttk.Progressbar(
+            prog_frame, mode="determinate", maximum=100
+        )
+        self.task_progress.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(8, 8), ipady=3)
+
+        self.btn_stop = tk.Button(
+            prog_frame, text="停止", command=self.stop_task,
+            state=tk.DISABLED, fg="white", bg=STOP_RED,
+            activebackground=STOP_RED, activeforeground="white",
+            font=("微软雅黑", 9), bd=0, padx=14, pady=2,
+            cursor="hand2",
+        )
+        self.btn_stop.pack(side=tk.LEFT)
+
+        self._global_refresh_callbacks = []
+
         self.notebook = ttk.Notebook(self)
-        self.notebook.pack(fill=tk.BOTH, expand=True, padx=16, pady=8)
+        self.notebook.pack(fill=tk.BOTH, expand=True, padx=16, pady=(4, 4))
 
         # ---- 各标签页 ----
         self._build_rename_mkv_panel()
         self._build_extract_panel()
-
         crop_frame = tk.Frame(self.notebook, bg=CARD)
         embed_crop_panel(crop_frame, self)
         self.notebook.add(crop_frame, text="黑边测量")
@@ -90,8 +132,6 @@ class App(tk.Tk):
         self.notebook.add(audio_frame, text="音频处理")
         self._audio_trim_tab = audio_frame
 
-        self._build_rename_mp4_panel()
-
         log_frame = tk.Frame(self.notebook, bg=CARD)
         self.log = scrolledtext.ScrolledText(
             log_frame, font=("Consolas", 10), bg=CARD, fg=TEXT,
@@ -102,33 +142,7 @@ class App(tk.Tk):
 
         self.notebook.bind("<<NotebookTabChanged>>", self._on_tab_changed)
 
-        # ---- 底部进度栏 + 脚标 ----
-        bottom_bar = tk.Frame(self, bg=BG)
-        bottom_bar.pack(fill=tk.X, padx=16, pady=(0, 4))
-
-        self.task_status = tk.StringVar(value="就绪")
-        tk.Label(
-            bottom_bar, textvariable=self.task_status, font=("微软雅黑", 10),
-            fg=TEXT, bg=BG, anchor="w",
-        ).pack(fill=tk.X)
-
-        prog_stop_row = tk.Frame(bottom_bar, bg=BG)
-        prog_stop_row.pack(fill=tk.X, pady=(4, 0))
-
-        self.task_progress = ttk.Progressbar(
-            prog_stop_row, mode="determinate", maximum=100
-        )
-        self.task_progress.pack(side=tk.LEFT, fill=tk.X, expand=True, ipady=2)
-
-        self.btn_stop = tk.Button(
-            prog_stop_row, text="■ 停止", command=self.stop_task,
-            state=tk.DISABLED, fg="white", bg=STOP_RED,
-            activebackground="#c0392b", activeforeground="white",
-            font=("微软雅黑", 9, "bold"), bd=0, padx=14, pady=2,
-            cursor="hand2",
-        )
-        self.btn_stop.pack(side=tk.RIGHT, padx=(10, 0))
-
+        # ---- 底部脚标 ----
         footer = tk.Frame(self, bg=BG)
         footer.pack(fill=tk.X)
         tk.Label(
@@ -188,47 +202,90 @@ class App(tk.Tk):
 
     def _build_rename_mkv_panel(self):
         frame = tk.Frame(self.notebook, bg=BG)
-        self.notebook.add(frame, text="规范MKV命名")
+        self.notebook.add(frame, text="规范命名")
         card = self._panel_card(frame)
-        self._section_title(card, "规范 MKV 命名")
-        self._rmkv_dir_var = tk.StringVar(value=self.subtitle_root)
-        self._dir_row(card, self._rmkv_dir_var, self._browse_rmkv)
-        self._hint(card, "将各剧集文件夹内含有 SxxExx 标识的 .mkv 重命名为 SxxExx.mkv")
-        self._start_btn(card, "开始重命名", self.rename_mkv_all)
+        self._section_title(card, "规范命名")
+
+        # MKV 重命名
+        mkv_frame = tk.Frame(card, bg=CARD, highlightbackground=BORDER, highlightthickness=1, padx=12, pady=10)
+        mkv_frame.pack(fill=tk.X, pady=(0, 12))
+        tk.Label(mkv_frame, text="MKV 重命名", font=("微软雅黑", 10, "bold"), fg=ACCENT, bg=CARD).pack(anchor="w")
+        self._hint(mkv_frame, "将各剧集文件夹内含有 SxxExx 标识的 .mkv 重命名为 SxxExx.mkv")
+        self._start_btn(mkv_frame, "开始重命名", self.rename_mkv_all)
+
+        # MP4 重命名
+        mp4_frame = tk.Frame(card, bg=CARD, highlightbackground=BORDER, highlightthickness=1, padx=12, pady=10)
+        mp4_frame.pack(fill=tk.X)
+        tk.Label(mp4_frame, text="MP4 重命名", font=("微软雅黑", 10, "bold"), fg=ACCENT, bg=CARD).pack(anchor="w")
+        self._hint(mp4_frame, "将 SxxExx_压制版.mp4 / SxxExx_原音_压制版.mp4 重命名为 SxxExx.mp4")
+        self._start_btn(mp4_frame, "开始重命名", self.rename_mp4_all)
 
     def _build_extract_panel(self):
         frame = tk.Frame(self.notebook, bg=BG)
         self.notebook.add(frame, text="提取字幕")
         card = self._panel_card(frame)
         self._section_title(card, "提取字幕")
-        self._ext_dir_var = tk.StringVar(value=self.subtitle_root)
-        self._dir_row(card, self._ext_dir_var, self._browse_extract)
         self._hint(card, "从 .mkv 中提取原版 + 中文字幕（SRT），繁体中文自动转为简体")
+
+        # 原版语言选择
+        lang_row = tk.Frame(card, bg=CARD)
+        lang_row.pack(fill=tk.X, pady=(6, 2))
+        tk.Label(lang_row, text="原版语言：", font=("微软雅黑", 10), fg=TEXT_SEC, bg=CARD).pack(side=tk.LEFT)
+
+        from utils import COMMON_LANG_OPTIONS
+
+        self._ext_lang_var = tk.StringVar(value="自动识别")
+        lang_menu = ttk.Combobox(
+            lang_row, textvariable=self._ext_lang_var, font=("微软雅黑", 9),
+            state="readonly", width=20,
+            values=[label for label, _ in COMMON_LANG_OPTIONS],
+        )
+        lang_menu.pack(side=tk.LEFT, padx=(8, 0))
+        lang_menu.current(0)
+        self._lang_menu = lang_menu
+        self._lang_options = COMMON_LANG_OPTIONS
+
+        def _on_lang_selected(*_):
+            label = self._ext_lang_var.get()
+            # 选"自定义…"时弹出输入框
+            if label == "自定义…":
+                import tkinter.simpledialog as sd
+                custom = sd.askstring("自定义语言", "输入 ISO 639-2 三字母语言码（如 vie）",
+                                      parent=self)
+                if custom and custom.strip():
+                    code = custom.strip().lower()
+                    # 插入自定义选项到"自定义…"后面
+                    display = f"{code.upper()} ({code})"
+                    new_options = list(lang_menu["values"])
+                    idx = list(new_options).index("自定义…") + 1
+                    new_options = list(new_options[:idx]) + [display] + list(new_options[idx:])
+                    lang_menu["values"] = new_options
+                    self._ext_lang_var.set(display)
+                    self._lang_options = self._lang_options + [(display, code)]
+                else:
+                    self._ext_lang_var.set("自动识别")
+            # 刷新 lang_options 引用
+            for lbl, code in self._lang_options:
+                if lbl == label:
+                    break
+        self._ext_lang_var.trace_add("write", _on_lang_selected)
+
         self._start_btn(card, "开始提取", self.extract_all)
 
-    def _build_rename_mp4_panel(self):
-        frame = tk.Frame(self.notebook, bg=BG)
-        self.notebook.add(frame, text="规范MP4命名")
-        card = self._panel_card(frame)
-        self._section_title(card, "规范 MP4 命名")
-        self._rmp4_dir_var = tk.StringVar(value=self.subtitle_root)
-        self._dir_row(card, self._rmp4_dir_var, self._browse_rmp4)
-        self._hint(card, "将 SxxExx_压制版.mp4 / SxxExx_原音_压制版.mp4 重命名为 SxxExx.mp4")
-        self._start_btn(card, "开始重命名", self.rename_mp4_all)
+    # ---- 规范命名合并到 _build_rename_mkv_panel ----
 
-    # ---- 目录浏览 ----
-
-    def _browse_rmkv(self):
-        p = filedialog.askdirectory(initialdir=self._rmkv_dir_var.get() or None)
-        if p: self._rmkv_dir_var.set(p)
-
-    def _browse_extract(self):
-        p = filedialog.askdirectory(initialdir=self._ext_dir_var.get() or None)
-        if p: self._ext_dir_var.set(p)
-
-    def _browse_rmp4(self):
-        p = filedialog.askdirectory(initialdir=self._rmp4_dir_var.get() or None)
-        if p: self._rmp4_dir_var.set(p)
+    def _browse_global_root(self):
+        p = filedialog.askdirectory(initialdir=self._global_root_var.get() or None)
+        if not p:
+            return
+        self._global_root_var.set(p)
+        self.subtitle_root = p
+        set_subtitle_root(p)
+        for cb in self._global_refresh_callbacks:
+            try:
+                cb()
+            except Exception:
+                pass
 
     # ---- 回调 ----
 
@@ -301,7 +358,7 @@ class App(tk.Tk):
 
     def rename_mkv_all(self):
         if self._warn_if_busy(): return
-        path = self._rmkv_dir_var.get().strip()
+        path = self._global_root_var.get().strip()
         if not path or not Path(path).is_dir():
             messagebox.showwarning("提示", "请先选择有效的字幕根目录"); return
         selected = Path(path)
@@ -327,7 +384,7 @@ class App(tk.Tk):
 
     def rename_mp4_all(self):
         if self._warn_if_busy(): return
-        path = self._rmp4_dir_var.get().strip()
+        path = self._global_root_var.get().strip()
         if not path or not Path(path).is_dir():
             messagebox.showwarning("提示", "请先选择有效的字幕根目录"); return
         selected = Path(path)
@@ -351,7 +408,7 @@ class App(tk.Tk):
 
     def extract_all(self):
         if self._warn_if_busy(): return
-        path = self._ext_dir_var.get().strip()
+        path = self._global_root_var.get().strip()
         if not path or not Path(path).is_dir():
             messagebox.showwarning("提示", "请先选择有效的字幕根目录"); return
         selected = Path(path)
@@ -361,6 +418,19 @@ class App(tk.Tk):
         if job_total == 0: self.log_msg("没有可提取的 .mkv 文件"); return
         self.subtitle_root = str(selected); set_subtitle_root(selected)
         self.log_msg(f"待提取：{', '.join(s.name for s in shows)}（{job_total} 个视频）")
+
+        # 解析用户指定的语言
+        selected_label = self._ext_lang_var.get()
+        forced_lang = None
+        for label, code in self._lang_options:
+            if label == selected_label:
+                forced_lang = code
+                break
+        if forced_lang:
+            self.log_msg(f"🎯 用户指定原版语言：{forced_lang}")
+        else:
+            self.log_msg(f"🔍 原版语言：自动识别")
+
         self._extracting = True; self._begin_batch_task(f"提取 {job_total} 个视频…")
         def w():
             ok=fail=0
@@ -369,7 +439,7 @@ class App(tk.Tk):
                     if self._task_cancel.is_set(): break
                     for mkv in sorted(show.glob("*.mkv")):
                         if self._task_cancel.is_set(): break
-                        try: self._log_threadsafe(f"=== {mkv.name}"); extract_subtitles(mkv, show, self._log_threadsafe); ok+=1
+                        try: self._log_threadsafe(f"=== {mkv.name}"); extract_subtitles(mkv, show, self._log_threadsafe, forced_lang=forced_lang); ok+=1
                         except Exception as e: self._log_threadsafe(f"失败：{mkv.name}|{e}"); fail+=1
                         self._progress_callback(int((ok+fail)*100/max(job_total,1)), f"{ok+fail}/{job_total}")
                 s = f"提取{'已停止' if self._task_cancel.is_set() else '完成'}：成功 {ok}，失败 {fail}"

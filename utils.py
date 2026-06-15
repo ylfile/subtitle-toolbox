@@ -75,7 +75,6 @@ SDH_KEYWORDS = (
 
 FORCED_NAME_RE = re.compile(r"\bforced\b", re.IGNORECASE)
 
-# ================= 语言码别名映射（ISO 639-2 → 统一三字母码） =================
 AUDIO_LANG_ALIAS = {
     "chs": "chi",
     "cht": "chi",
@@ -138,6 +137,63 @@ AUDIO_LANG_ALIAS = {
     "sqi": "sqi",
     "slk": "slk",
 }
+
+# ================= 通用的语言选项列表（提取字幕 / 音频处理共用） =================
+# 每个元素 (显示标签, 三字母语言码)
+# 如果 future 要加语言，在这里加就行，两侧 UI 自动同步
+COMMON_LANG_OPTIONS = [
+    ("自动识别", ""),
+    ("自定义…", "__custom__"),
+    ("英语 (eng)", "eng"),
+    ("日语 (jpn)", "jpn"),
+    ("韩语 (kor)", "kor"),
+    ("泰语 (tha)", "tha"),
+    ("法语 (fra)", "fra"),
+    ("德语 (deu)", "deu"),
+    ("俄语 (rus)", "rus"),
+    ("西班牙语 (spa)", "spa"),
+    ("意大利语 (ita)", "ita"),
+    ("葡萄牙语 (por)", "por"),
+    ("土耳其语 (tur)", "tur"),
+    ("阿拉伯语 (ara)", "ara"),
+    ("荷兰语 (nld)", "nld"),
+    ("波兰语 (pol)", "pol"),
+    ("瑞典语 (swe)", "swe"),
+    ("丹麦语 (dan)", "dan"),
+    ("挪威语 (nor)", "nor"),
+    ("芬兰语 (fin)", "fin"),
+    ("捷克语 (ces)", "ces"),
+    ("匈牙利语 (hun)", "hun"),
+    ("罗马尼亚语 (ron)", "ron"),
+    ("乌克兰语 (ukr)", "ukr"),
+    ("印度尼西亚语 (ind)", "ind"),
+    ("马来语 (msa)", "msa"),
+    ("保加利亚语 (bul)", "bul"),
+    ("克罗地亚语 (hrv)", "hrv"),
+    ("塞尔维亚语 (srp)", "srp"),
+    ("斯洛伐克语 (slk)", "slk"),
+    ("斯洛文尼亚语 (slv)", "slv"),
+    ("立陶宛语 (lit)", "lit"),
+    ("拉脱维亚语 (lav)", "lav"),
+    ("爱沙尼亚语 (est)", "est"),
+    ("希伯来语 (heb)", "heb"),
+    ("希腊语 (ell)", "ell"),
+    ("冰岛语 (isl)", "isl"),
+    ("越南语 (vie)", "vie"),
+    ("他加禄语/菲律宾语 (tgl)", "tgl"),
+    ("印地语 (hin)", "hin"),
+    ("孟加拉语 (ben)", "ben"),
+    ("乌尔都语 (urd)", "urd"),
+    ("泰米尔语 (tam)", "tam"),
+    ("缅甸语 (mya)", "mya"),
+    ("高棉语 (khm)", "khm"),
+    ("老挝语 (lao)", "lao"),
+    ("蒙古语 (mon)", "mon"),
+    ("尼泊尔语 (nep)", "nep"),
+    ("波斯语 (fas)", "fas"),
+    ("祖鲁语 (zul)", "zul"),
+    ("斯瓦希里语 (swa)", "swa"),
+]
 
 # 文件夹名末尾语言标识（如「弃黄从正tur」→ tur）
 FOLDER_TRAILING_LANG_RE = re.compile(r"([a-z]{2,3})$")
@@ -235,13 +291,20 @@ def extract_folder_lang(folder_name):
     return None
 
 
-def pick_audio_language(audio_tracks, folder_name, mkv_name, log=None):
+def pick_audio_language(audio_tracks, folder_name, mkv_name, log=None, forced_lang=None):
     """
     多条音轨时，按文件夹名末尾语言标识选用音轨；
     原版字幕应取 language 与该音轨一致的轨。
     audio_tracks: [{id, raw, name}, ...]
+    如果 forced_lang 不为空，则直接返回 forced_lang（跳过自动识别）。
     返回 normalize_audio_lang 后的语言代码。
     """
+    if forced_lang:
+        lang = normalize_audio_lang(forced_lang)
+        if log:
+            log(f"🎯 用户指定原版语言：{lang}")
+        return lang
+
     if log:
         log(f"🎧 共 {len(audio_tracks)} 条音轨：")
         for t in audio_tracks:
@@ -612,13 +675,14 @@ def convert_srt_traditional_to_simplified(srt_path):
     t2s_cfg = Path(TOOLS["t2s"])
     share_dir = _opencc_share_dir()
     if share_dir:
-        # 用 OpenCC 配置目录作 cwd
+        # 用 OpenCC 配置目录作 cwd，-c 用相对路径（避免中文路径问题）
+        cfg_rel = "t2s.json"
         subprocess.run(
-            [str(opencc), "-c", str(t2s_cfg), "-i", str(path), "-o", str(path)],
+            [str(opencc), "-c", cfg_rel, "-i", str(path), "-o", str(path)],
             check=True,
             cwd=str(share_dir),
             stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
         )
     else:
         subprocess.run(
