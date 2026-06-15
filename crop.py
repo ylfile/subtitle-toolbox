@@ -188,7 +188,7 @@ def embed_crop_panel(parent, app):
     frame = tk.Frame(parent)
 
     state = {
-        "root_path": SUBTITLE_ROOT or "",
+        "root_path": app.subtitle_root if app else SUBTITLE_ROOT or "",
         "video_path": "",
         "img_width": 0,
         "img_height": 0,
@@ -252,14 +252,12 @@ def embed_crop_panel(parent, app):
             state["allow_measure"] = True
 
     def browse_root():
-        path = filedialog.askdirectory(initialdir=state["root_path"] or None)
-        if not path:
+        path = app.subtitle_root if app else ""
+        if not path or not Path(path).is_dir():
+            messagebox.showwarning("提示", "请先在顶部全局目录栏选择字幕根目录", parent=frame)
             return
         state["root_path"] = path
         root_var.set(path)
-        set_subtitle_root(path)
-        if app:
-            app.subtitle_root = path
         shows = list_show_folders(path)
         log(f"\U0001f4c1 根目录：{path}（{len(shows)} 部剧）")
         status_var.set(
@@ -441,8 +439,14 @@ def embed_crop_panel(parent, app):
 
     def batch_measure():
         if not state["root_path"]:
-            messagebox.showwarning("提示", "请先选择字幕根目录", parent=frame)
-            return
+            # 尝试从全局目录取
+            global_path = app.subtitle_root if app else ""
+            if global_path and Path(global_path).is_dir():
+                state["root_path"] = global_path
+                root_var.set(global_path)
+            else:
+                messagebox.showwarning("提示", "请先在顶部全局目录栏选择字幕根目录", parent=frame)
+                return
         root_path = Path(state["root_path"])
         shows = iter_show_dirs_with_mkv(root_path)
         if not shows:
@@ -511,13 +515,14 @@ def embed_crop_panel(parent, app):
 
     # ========== UI 控件 ==========
 
-    # 第一行：根目录
+    # 第一行：根目录（从全局目录栏读取，只读显示）
     root_row = tk.Frame(frame)
     root_row.pack(fill=tk.X, padx=10, pady=5)
-    tk.Label(root_row, text="字幕根目录（其下每个文件夹=一部剧）：").pack(side=tk.LEFT)
+    tk.Label(root_row, text="📁 当前根目录：", font=("微软雅黑", 10), fg="#2c3e50").pack(side=tk.LEFT)
     root_var = tk.StringVar(value=state["root_path"])
-    tk.Entry(root_row, textvariable=root_var, width=48).pack(side=tk.LEFT, padx=5)
-    tk.Button(root_row, text="浏览", command=lambda: browse_root(),
+    _entry = tk.Entry(root_row, textvariable=root_var, width=48, state="readonly")
+    _entry.pack(side=tk.LEFT, padx=5)
+    tk.Button(root_row, text="从全局同步", command=browse_root,
               font=("微软雅黑", 9), fg="#2d6cc9", bg="#eaf1fd",
               activebackground="#2d6cc9", activeforeground="white",
               bd=0, padx=14, pady=2, cursor="hand2").pack(side=tk.LEFT)

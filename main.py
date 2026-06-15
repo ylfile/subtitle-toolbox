@@ -95,8 +95,11 @@ class App(tk.Tk):
             fg=TEXT, bg=BG, anchor="w", width=9,
         ).pack(side=tk.LEFT)
 
+        style = ttk.Style()
+        style.theme_use("clam")
+        style.configure("color.Horizontal.TProgressbar", background="#2ecc71", troughcolor="#e0e3eb", bordercolor="#ffffff", lightcolor="#2ecc71", darkcolor="#27ae60")
         self.task_progress = ttk.Progressbar(
-            prog_frame, mode="determinate", maximum=100
+            prog_frame, style="color.Horizontal.TProgressbar", mode="determinate", maximum=100
         )
         self.task_progress.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(8, 8), ipady=3)
 
@@ -330,10 +333,12 @@ class App(tk.Tk):
     def _begin_batch_task(self, status_text):
         self._task_cancel.clear()
         self.btn_stop.config(state=tk.NORMAL, bg=STOP_RED)
-        self._set_task_ui(0, status_text)
+        self.task_progress["value"] = 0
+        self.task_status.set("处理中…")
 
     def _finish_batch_task(self, pct, status):
-        self._set_task_ui(pct, status)
+        self.task_progress["value"] = pct
+        self.task_status.set(status)
         self.btn_stop.config(state=tk.DISABLED, bg="#ccc")
 
     def stop_task(self):
