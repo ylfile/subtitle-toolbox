@@ -55,6 +55,7 @@ DEFAULT_WATERMARK = {
     "fade_out_ms": 1000,
     "start_time": "0:00:38.00",
     "end_time": "1:00:00.00",
+    "fade_mode": "simple",
 }
 
 

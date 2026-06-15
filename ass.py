@@ -168,14 +168,13 @@ def _append_watermark_dialogue(ass_lines, playres_x, playres_y):
         return
     try:
         from watermark import generate_watermark_dialogue
-        # 计算位置（负数表示从右下角偏移）
         x = wm.get("x", -20)
         y = wm.get("y", -20)
         if x < 0:
-            x = playres_x + x  # 负数 = 从右往左偏
+            x = playres_x + x
         if y < 0:
-            y = playres_y + y  # 负数 = 从下往上偏
-        dialogue, img_w, img_h = generate_watermark_dialogue(
+            y = playres_y + y
+        lines, img_w, img_h = generate_watermark_dialogue(
             img_path,
             scale=wm.get("scale", 100),
             x=x, y=y,
@@ -183,8 +182,10 @@ def _append_watermark_dialogue(ass_lines, playres_x, playres_y):
             fade_out_ms=wm.get("fade_out_ms", 1000),
             start_time=wm.get("start_time", "0:00:38.00"),
             end_time=wm.get("end_time", "1:00:00.00"),
+            fade_mode=wm.get("fade_mode", "simple"),
         )
-        ass_lines.append(dialogue)
+        for line in lines:
+            ass_lines.append(line)
     except Exception as e:
         pass  # 水印生成失败不影响字幕
 
@@ -902,16 +903,17 @@ def embed_ass_panel(parent, app):
              font=("微软雅黑", 8), fg="#bdc3c7").pack(side=tk.LEFT)
 
     # ---- 图片水印配置 ----
-    from config import WATERMARK_CONFIG as wm_cfg, DEFAULT_WATERMARK as wm_default
-    wm_enabled_var = tk.BooleanVar(value=wm_cfg.get("enabled", False))
-    wm_image_var = tk.StringVar(value=wm_cfg.get("image_path", ""))
-    wm_scale_var = tk.StringVar(value=str(wm_cfg.get("scale", 100)))
-    wm_x_var = tk.StringVar(value=str(wm_cfg.get("x", -20)))
-    wm_y_var = tk.StringVar(value=str(wm_cfg.get("y", -20)))
-    wm_fadein_var = tk.StringVar(value=str(wm_cfg.get("fade_in_ms", 1000)))
-    wm_fadeout_var = tk.StringVar(value=str(wm_cfg.get("fade_out_ms", 1000)))
-    wm_start_var = tk.StringVar(value=wm_cfg.get("start_time", "0:00:38.00"))
-    wm_end_var = tk.StringVar(value=wm_cfg.get("end_time", "1:00:00.00"))
+    import config as _cfg
+    wm_enabled_var = tk.BooleanVar(value=_cfg.WATERMARK_CONFIG.get("enabled", False))
+    wm_image_var = tk.StringVar(value=_cfg.WATERMARK_CONFIG.get("image_path", ""))
+    wm_scale_var = tk.StringVar(value=str(_cfg.WATERMARK_CONFIG.get("scale", 100)))
+    wm_x_var = tk.StringVar(value=str(_cfg.WATERMARK_CONFIG.get("x", -20)))
+    wm_y_var = tk.StringVar(value=str(_cfg.WATERMARK_CONFIG.get("y", -20)))
+    wm_fadein_var = tk.StringVar(value=str(_cfg.WATERMARK_CONFIG.get("fade_in_ms", 1000)))
+    wm_fadeout_var = tk.StringVar(value=str(_cfg.WATERMARK_CONFIG.get("fade_out_ms", 1000)))
+    wm_start_var = tk.StringVar(value=_cfg.WATERMARK_CONFIG.get("start_time", "0:00:38.00"))
+    wm_end_var = tk.StringVar(value=_cfg.WATERMARK_CONFIG.get("end_time", "1:00:00.00"))
+    wm_mode_var = tk.StringVar(value=_cfg.WATERMARK_CONFIG.get("fade_mode", "simple"))
 
     wm_frame = tk.LabelFrame(parent, text="图片水印（可选）",
                              font=("微软雅黑", 9, "bold"),
@@ -959,6 +961,17 @@ def embed_ass_panel(parent, app):
     tk.Entry(wm_row2, textvariable=wm_fadeout_var, width=5,
              font=("Consolas", 8), fg="#2c3e50", bg="#f9faff", relief="solid", bd=1).pack(side=tk.LEFT, padx=(2, 0))
 
+    # 第二行b：渐显模式
+    wm_row2b = tk.Frame(wm_frame, bg="#ffffff")
+    wm_row2b.pack(fill=tk.X, pady=(0, 2))
+    tk.Label(wm_row2b, text="渐显模式：", font=("微软雅黑", 8), fg="#7f8c8d", bg="#ffffff").pack(side=tk.LEFT)
+    tk.Radiobutton(wm_row2b, text="简单渐显", variable=wm_mode_var, value="simple",
+                   font=("微软雅黑", 8), fg="#2c3e50", bg="#ffffff",
+                   selectcolor="#ffffff", activebackground="#ffffff").pack(side=tk.LEFT)
+    tk.Radiobutton(wm_row2b, text="放射渐显（随机点扩散）", variable=wm_mode_var, value="radial",
+                   font=("微软雅黑", 8), fg="#2c3e50", bg="#ffffff",
+                   selectcolor="#ffffff", activebackground="#ffffff").pack(side=tk.LEFT)
+
     # 第三行：时间范围 + 保存按钮
     wm_row3 = tk.Frame(wm_frame, bg="#ffffff")
     wm_row3.pack(fill=tk.X)
@@ -970,34 +983,39 @@ def embed_ass_panel(parent, app):
              font=("Consolas", 8), fg="#2c3e50", bg="#f9faff", relief="solid", bd=1).pack(side=tk.LEFT, padx=(2, 8))
 
     def _save_wm_inline():
-        from config import WATERMARK_CONFIG as wm_var, save_config
-        wm_var["enabled"] = wm_enabled_var.get()
-        wm_var["image_path"] = wm_image_var.get()
-        try: wm_var["scale"] = int(wm_scale_var.get())
-        except: wm_var["scale"] = 100
-        try: wm_var["x"] = int(wm_x_var.get())
-        except: wm_var["x"] = -20
-        try: wm_var["y"] = int(wm_y_var.get())
-        except: wm_var["y"] = -20
-        try: wm_var["fade_in_ms"] = int(wm_fadein_var.get())
-        except: wm_var["fade_in_ms"] = 1000
-        try: wm_var["fade_out_ms"] = int(wm_fadeout_var.get())
-        except: wm_var["fade_out_ms"] = 1000
-        wm_var["start_time"] = wm_start_var.get()
-        wm_var["end_time"] = wm_end_var.get()
-        save_config()
-        log(f"✅ 水印配置已保存")
+        import config
+        wm = config.WATERMARK_CONFIG
+        wm["enabled"] = wm_enabled_var.get()
+        wm["image_path"] = wm_image_var.get()
+        try: wm["scale"] = int(wm_scale_var.get())
+        except: wm["scale"] = 100
+        try: wm["x"] = int(wm_x_var.get())
+        except: wm["x"] = -20
+        try: wm["y"] = int(wm_y_var.get())
+        except: wm["y"] = -20
+        try: wm["fade_in_ms"] = int(wm_fadein_var.get())
+        except: wm["fade_in_ms"] = 1000
+        try: wm["fade_out_ms"] = int(wm_fadeout_var.get())
+        except: wm["fade_out_ms"] = 1000
+        wm["start_time"] = wm_start_var.get()
+        wm["end_time"] = wm_end_var.get()
+        wm["fade_mode"] = wm_mode_var.get()
+        config.save_config()
+        log(f"✅ 水印配置已保存（fade_mode={wm['fade_mode']}）")
 
     def _reset_wm_inline():
-        wm_enabled_var.set(wm_default["enabled"])
-        wm_image_var.set(wm_default["image_path"])
-        wm_scale_var.set(str(wm_default["scale"]))
-        wm_x_var.set(str(wm_default["x"]))
-        wm_y_var.set(str(wm_default["y"]))
-        wm_fadein_var.set(str(wm_default["fade_in_ms"]))
-        wm_fadeout_var.set(str(wm_default["fade_out_ms"]))
-        wm_start_var.set(wm_default["start_time"])
-        wm_end_var.set(wm_default["end_time"])
+        import config
+        d = config.DEFAULT_WATERMARK
+        wm_enabled_var.set(d["enabled"])
+        wm_image_var.set(d["image_path"])
+        wm_scale_var.set(str(d["scale"]))
+        wm_x_var.set(str(d["x"]))
+        wm_y_var.set(str(d["y"]))
+        wm_fadein_var.set(str(d["fade_in_ms"]))
+        wm_fadeout_var.set(str(d["fade_out_ms"]))
+        wm_start_var.set(d["start_time"])
+        wm_end_var.set(d["end_time"])
+        wm_mode_var.set(d.get("fade_mode", "simple"))
         _save_wm_inline()
 
     tk.Button(wm_row3, text="恢复默认", command=_reset_wm_inline,
