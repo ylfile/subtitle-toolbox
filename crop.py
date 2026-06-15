@@ -251,31 +251,17 @@ def embed_crop_panel(parent, app):
             en_pos_label.config(text="—")
             state["allow_measure"] = True
 
-    def browse_root():
-        path = app.subtitle_root if app else ""
-        if not path or not Path(path).is_dir():
-            messagebox.showwarning("提示", "请先在顶部全局目录栏选择字幕根目录", parent=frame)
-            return
-        state["root_path"] = path
-        root_var.set(path)
-        shows = list_show_folders(path)
-        log(f"\U0001f4c1 根目录：{path}（{len(shows)} 部剧）")
-        status_var.set(
-            f"已选根目录，共 {len(shows)} 个子文件夹。"
-            f"请点「选择视频」进入某剧文件夹选一个 mkv 进行测量。"
-        )
-
     def load_video():
-        if not state["root_path"]:
+        if not app.subtitle_root:
             messagebox.showwarning("提示", "请先选择字幕根目录", parent=frame)
             return
         path = filedialog.askopenfilename(
-            initialdir=state["root_path"],
+            initialdir=app.subtitle_root,
             filetypes=[("视频文件", "*.mp4 *.mkv *.avi *.mov *.ts")],
         )
         if not path:
             return
-        show = show_name_from_video(state["root_path"], path)
+        show = show_name_from_video(app.subtitle_root, path)
         state["video_path"] = path
         apply_measured_state(show)
         if not is_measured(show):
@@ -304,14 +290,14 @@ def embed_crop_panel(parent, app):
         en_pos_label.config(text="—")
 
     def measure_crop():
-        if not state["root_path"]:
+        if not app.subtitle_root:
             messagebox.showwarning("提示", "请先选择根目录", parent=frame)
             return
         if not state["video_path"]:
             messagebox.showwarning("提示", "请先选择视频", parent=frame)
             return
 
-        show = show_name_from_video(state["root_path"], state["video_path"])
+        show = show_name_from_video(app.subtitle_root, state["video_path"])
         if is_measured(show) and not state["allow_measure"]:
             if not messagebox.askyesno(
                 "已测量", f"「{show}」已有记录，是否重新测量？", parent=frame
@@ -402,7 +388,7 @@ def embed_crop_panel(parent, app):
             bar_label.config(text=f"{top_bar} px")
             content_label.config(text=f"{content_h} px")
 
-            show = show_name_from_video(state["root_path"], state["video_path"])
+            show = show_name_from_video(app.subtitle_root, state["video_path"])
             layout = update_pos_preview(top_bar, bottom_bar)
 
             save_crop(
@@ -438,16 +424,10 @@ def embed_crop_panel(parent, app):
             )
 
     def batch_measure():
-        if not state["root_path"]:
-            # 尝试从全局目录取
-            global_path = app.subtitle_root if app else ""
-            if global_path and Path(global_path).is_dir():
-                state["root_path"] = global_path
-                root_var.set(global_path)
-            else:
-                messagebox.showwarning("提示", "请先在顶部全局目录栏选择字幕根目录", parent=frame)
-                return
-        root_path = Path(state["root_path"])
+        if not app.subtitle_root:
+            messagebox.showwarning("提示", "请先在顶部全局目录栏选择字幕根目录", parent=frame)
+            return
+        root_path = Path(app.subtitle_root)
         shows = iter_show_dirs_with_mkv(root_path)
         if not shows:
             messagebox.showinfo("提示", "未找到含 mkv 的剧集文件夹", parent=frame)
@@ -485,7 +465,7 @@ def embed_crop_panel(parent, app):
         def worker():
             try:
                 ok, fail, skip = batch_auto_measure(
-                    state["root_path"],
+                    app.subtitle_root,
                     log=log,
                     skip_measured=skip_measured,
                     on_progress=on_progress,
@@ -499,7 +479,7 @@ def embed_crop_panel(parent, app):
                 # 刷新面板状态
                 load_config()
                 if state["video_path"]:
-                    s = show_name_from_video(state["root_path"], state["video_path"])
+                    s = show_name_from_video(app.subtitle_root, state["video_path"])
                     apply_measured_state(s)
             except Exception as e:
                 if app and hasattr(app, "_log_threadsafe"):
@@ -515,19 +495,7 @@ def embed_crop_panel(parent, app):
 
     # ========== UI 控件 ==========
 
-    # 第一行：根目录（从全局目录栏读取，只读显示）
-    root_row = tk.Frame(frame)
-    root_row.pack(fill=tk.X, padx=10, pady=5)
-    tk.Label(root_row, text="📁 当前根目录：", font=("微软雅黑", 10), fg="#2c3e50").pack(side=tk.LEFT)
-    root_var = tk.StringVar(value=state["root_path"])
-    _entry = tk.Entry(root_row, textvariable=root_var, width=48, state="readonly")
-    _entry.pack(side=tk.LEFT, padx=5)
-    tk.Button(root_row, text="从全局同步", command=browse_root,
-              font=("微软雅黑", 9), fg="#2d6cc9", bg="#eaf1fd",
-              activebackground="#2d6cc9", activeforeground="white",
-              bd=0, padx=14, pady=2, cursor="hand2").pack(side=tk.LEFT)
-
-    # 第二行：画面像素 + 当前剧集
+    # 第一行：画面像素 + 当前剧集
     res_row = tk.Frame(frame)
     res_row.pack(fill=tk.X, padx=10, pady=2)
     pixel_label = tk.Label(res_row, text="画面像素：—", font=("Arial", 11))
@@ -580,8 +548,6 @@ def embed_crop_panel(parent, app):
     canvas.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
     canvas.bind("<Button-1>", on_click)
 
-    if state["root_path"] and app:
-        app.subtitle_root = state["root_path"]
 
     frame.pack(fill=tk.BOTH, expand=True)
     return frame
