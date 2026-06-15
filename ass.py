@@ -192,29 +192,35 @@ def _append_bilingual_dialogues(ass_lines, zh, tr, cx, cn_pos, en_pos, style_cn,
     """中英字幕各自保留原时间轴，分别写入对应位置（不按序号配对）"""
     for z in zh:
         line_text = flatten_subtitle_line(z["text"])
-        # 如果字幕文本含 \an8，使用字幕组信息位置
+        # 如果字幕文本含 \an8，使用字幕组信息位置，保留 \an8 锚点
         if "\\an8" in line_text and info_y is not None:
             pos = info_y
-            line_text = line_text.replace("\\an8", "")
+            an = "8"
+            line_text = re.sub(r"\{\\an8\}", "", line_text)  # 删除 {\an8}
+            line_text = re.sub(r"\{[^}]*\\an8[^}]*\}", "", line_text)  # 删除含 \an8 的整个花括号
         else:
             pos = cn_pos
+            an = "2"
         ass_lines.append(
             f"Dialogue: 0,{ass_time(z['start'])},{ass_time(z['end'])},"
             f"Default,,0,0,0,,"
-            f"{{\\an2\\r{style_cn}\\pos({cx},{pos})}}{line_text}\n"
+            f"{{\\an{an}\\r{style_cn}\\pos({cx},{pos})}}{line_text}\n"
         )
     for t in tr:
         line_text = flatten_subtitle_line(t["text"])
-        # 如果字幕文本含 \an8，使用字幕组信息位置
+        # 如果字幕文本含 \an8，使用字幕组信息位置，保留 \an8 锚点
         if "\\an8" in line_text and info_y is not None:
             pos = info_y
-            line_text = line_text.replace("\\an8", "")
+            an = "8"
+            line_text = re.sub(r"\{\\an8\}", "", line_text)
+            line_text = re.sub(r"\{[^}]*\\an8[^}]*\}", "", line_text)
         else:
             pos = en_pos
+            an = "2"
         ass_lines.append(
             f"Dialogue: 0,{ass_time(t['start'])},{ass_time(t['end'])},"
             f"Default,,0,0,0,,"
-            f"{{\\an2\\r{style_en}\\pos({cx},{pos})}}{line_text}\n"
+            f"{{\\an{an}\\r{style_en}\\pos({cx},{pos})}}{line_text}\n"
         )
 
 
@@ -222,16 +228,19 @@ def _append_chinese_only_dialogues(ass_lines, zh, cx, cn_pos, style_cn, info_y=N
     """仅中文版：位置与双语模式下的中文行一致（cn_pos）"""
     for z in zh:
         line_text = flatten_subtitle_line(z["text"])
-        # 如果字幕文本含 \an8，使用字幕组信息位置
+        # 如果字幕文本含 \an8，使用字幕组信息位置，保留 \an8 锚点
         if "\\an8" in line_text and info_y is not None:
             pos = info_y
-            line_text = line_text.replace("\\an8", "")
+            an = "8"
+            line_text = re.sub(r"\{\\an8\}", "", line_text)
+            line_text = re.sub(r"\{[^}]*\\an8[^}]*\}", "", line_text)
         else:
             pos = cn_pos
+            an = "2"
         ass_lines.append(
             f"Dialogue: 0,{ass_time(z['start'])},{ass_time(z['end'])},"
             f"Default,,0,0,0,,"
-            f"{{\\an2\\r{style_cn}\\pos({cx},{pos})}}{line_text}\n"
+            f"{{\\an{an}\\r{style_cn}\\pos({cx},{pos})}}{line_text}\n"
         )
 
 
