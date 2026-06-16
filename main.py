@@ -357,7 +357,7 @@ class App(tk.Tk):
 
     def _set_task_ui(self, pct, status):
         self.task_progress["value"] = pct
-        self.task_status.set(status)
+        self._task_status_footer.set(status)
 
     # ========== 功能入口 ==========
 

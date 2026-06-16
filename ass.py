@@ -157,44 +157,46 @@ def _append_info_dialogues(ass_lines, style_info, cx, info_y, info_an):
         )
 
 
-def _append_watermark_dialogue(ass_lines, playres_x, playres_y, video_duration_sec=3600):
-    """如果水印配置启用且图片存在，追加水印 Dialogue 行"""
+def _append_watermark_dialogue(ass_lines, playres_x, playres_y, video_duration_sec=3600, top_bar=0):
+    """如果水印配置启用，追加 ASS 水印 Dialogue 行"""
     import config
     wm = config.WATERMARK_CONFIG
     if not wm.get("enabled"):
         return
-    img_path = wm.get("image_path", "")
-    if not img_path or not Path(img_path).is_file():
-        return
     try:
         from watermark import generate_watermark_dialogues
-        lines, img_w, img_h = generate_watermark_dialogues(
-            img_path,
-            scale=wm.get("scale", 100),
-            alignment=wm.get("alignment", "top-left"),
-            margin=wm.get("margin", 10),
-            appearances=wm.get("appearances", 3),
-            duration_sec=wm.get("duration_sec", 30),
+        lines = generate_watermark_dialogues(
             playres_x=playres_x,
             playres_y=playres_y,
-            video_duration_sec=video_duration_sec,
+            alignment=wm.get("alignment", "top-right"),
+            margin=wm.get("margin", 10),
+            start_sec=wm.get("start_sec", 900),
+            duration_sec=wm.get("duration_sec", 30),
+            ass_path=wm.get("ass_path", ""),
+            top_bar=top_bar,
         )
         for line in lines:
             ass_lines.append(line)
-    except Exception as e:
+    except Exception:
         pass  # 水印生成失败不影响字幕
 
 
-def _append_bilingual_dialogues(ass_lines, zh, tr, cx, cn_pos, en_pos, style_cn, style_en, info_y=None):
+def _append_bilingual_dialogues(ass_lines, zh, tr, cx, cn_pos, en_pos, style_cn, style_en, info_y=None, top_bar=0, playres_y=1080):
     """中英字幕各自保留原时间轴，分别写入对应位置（不按序号配对）"""
+    from utils import font_size_to_pixels, CN_FONT_REF, EN_FONT_REF
+    cn_h = font_size_to_pixels(CN_FONT_REF, playres_y)
+    en_h = font_size_to_pixels(EN_FONT_REF, playres_y)
     for z in zh:
         line_text = flatten_subtitle_line(z["text"])
-        # 如果字幕文本含 \an8，使用字幕组信息位置，保留 \an8 锚点
         if "\\an8" in line_text and info_y is not None:
-            pos = info_y
             an = "8"
-            line_text = re.sub(r"\{\\an8\}", "", line_text)  # 删除 {\an8}
-            line_text = re.sub(r"\{[^}]*\\an8[^}]*\}", "", line_text)  # 删除含 \an8 的整个花括号
+            line_text = re.sub(r"\{\\an8\}", "", line_text)
+            line_text = re.sub(r"\{[^}]*\\an8[^}]*\}", "", line_text)
+            # 黑边够高 → 垂直居中，否则用 info_y
+            if top_bar >= cn_h:
+                pos = (top_bar - cn_h) // 2
+            else:
+                pos = info_y
         else:
             pos = cn_pos
             an = "2"
@@ -205,12 +207,14 @@ def _append_bilingual_dialogues(ass_lines, zh, tr, cx, cn_pos, en_pos, style_cn,
         )
     for t in tr:
         line_text = flatten_subtitle_line(t["text"])
-        # 如果字幕文本含 \an8，使用字幕组信息位置，保留 \an8 锚点
         if "\\an8" in line_text and info_y is not None:
-            pos = info_y
             an = "8"
             line_text = re.sub(r"\{\\an8\}", "", line_text)
             line_text = re.sub(r"\{[^}]*\\an8[^}]*\}", "", line_text)
+            if top_bar >= en_h:
+                pos = (top_bar - en_h) // 2
+            else:
+                pos = info_y
         else:
             pos = en_pos
             an = "2"
@@ -221,16 +225,20 @@ def _append_bilingual_dialogues(ass_lines, zh, tr, cx, cn_pos, en_pos, style_cn,
         )
 
 
-def _append_chinese_only_dialogues(ass_lines, zh, cx, cn_pos, style_cn, info_y=None):
+def _append_chinese_only_dialogues(ass_lines, zh, cx, cn_pos, style_cn, info_y=None, top_bar=0, playres_y=1080):
     """仅中文版：位置与双语模式下的中文行一致（cn_pos）"""
+    from utils import font_size_to_pixels, CN_FONT_REF
+    cn_h = font_size_to_pixels(CN_FONT_REF, playres_y)
     for z in zh:
         line_text = flatten_subtitle_line(z["text"])
-        # 如果字幕文本含 \an8，使用字幕组信息位置，保留 \an8 锚点
         if "\\an8" in line_text and info_y is not None:
-            pos = info_y
             an = "8"
             line_text = re.sub(r"\{\\an8\}", "", line_text)
             line_text = re.sub(r"\{[^}]*\\an8[^}]*\}", "", line_text)
+            if top_bar >= cn_h:
+                pos = (top_bar - cn_h) // 2
+            else:
+                pos = info_y
         else:
             pos = cn_pos
             an = "2"
@@ -436,14 +444,14 @@ def generate_ass(folder, crop_cfg, log, on_progress=None, progress_state=None, s
         _append_info_dialogues(ass_lines, style_info, cx, info_y, info_an)
 
         if chi_only:
-            _append_chinese_only_dialogues(ass_lines, zh, cx, cn_pos, style_cn, info_y=info_y)
+            _append_chinese_only_dialogues(ass_lines, zh, cx, cn_pos, style_cn, info_y=info_y, top_bar=top_bar, playres_y=playres_y)
         else:
             _append_bilingual_dialogues(
-                ass_lines, zh, tr, cx, cn_pos, en_pos, style_cn, style_en, info_y=info_y
+                ass_lines, zh, tr, cx, cn_pos, en_pos, style_cn, style_en, info_y=info_y, top_bar=top_bar, playres_y=playres_y
             )
 
         # 水印
-        _append_watermark_dialogue(ass_lines, playres_x, playres_y)
+        _append_watermark_dialogue(ass_lines, playres_x, playres_y, top_bar=top_bar)
 
         errors = self_check(ass_lines)
         if errors:
@@ -897,80 +905,74 @@ def embed_ass_panel(parent, app):
     tk.Label(info_btn_row, text="  修改后需点保存，下次生成ASS时生效", bg="#ffffff",
              font=("微软雅黑", 8), fg="#bdc3c7").pack(side=tk.LEFT)
 
-    # ---- 图片水印配置 ----
+    # ---- ASS 水印配置 ----
     import config as _cfg
     wm_enabled_var = tk.BooleanVar(value=_cfg.WATERMARK_CONFIG.get("enabled", False))
-    wm_image_var = tk.StringVar(value=_cfg.WATERMARK_CONFIG.get("image_path", ""))
-    wm_scale_var = tk.StringVar(value=str(_cfg.WATERMARK_CONFIG.get("scale", 100)))
-    wm_align_var = tk.StringVar(value=_cfg.WATERMARK_CONFIG.get("alignment", "top-left"))
+    wm_ass_path_var = tk.StringVar(value=_cfg.WATERMARK_CONFIG.get("ass_path", ""))
+    wm_align_var = tk.StringVar(value=_cfg.WATERMARK_CONFIG.get("alignment", "top-right"))
     wm_margin_var = tk.StringVar(value=str(_cfg.WATERMARK_CONFIG.get("margin", 10)))
-    wm_appear_var = tk.StringVar(value=str(_cfg.WATERMARK_CONFIG.get("appearances", 3)))
+    wm_start_var = tk.StringVar(value=str(_cfg.WATERMARK_CONFIG.get("start_sec", 900)))
     wm_dur_var = tk.StringVar(value=str(_cfg.WATERMARK_CONFIG.get("duration_sec", 30)))
 
-    wm_frame = tk.LabelFrame(parent, text="图片水印（可选）",
+    wm_frame = tk.LabelFrame(parent, text="ASS水印（可选）",
                              font=("微软雅黑", 9, "bold"),
                              fg="#2c3e50", bg="#ffffff",
                              relief="solid", bd=1, padx=8, pady=4)
     wm_frame.pack(fill=tk.X, padx=10, pady=(4, 2))
 
-    # 第一行：启用 + 图片路径
+    # 第一行：启用 + ASS 文件路径
     wm_row1 = tk.Frame(wm_frame, bg="#ffffff")
     wm_row1.pack(fill=tk.X, pady=(0, 2))
     tk.Checkbutton(wm_row1, text="启用水印", variable=wm_enabled_var,
                    font=("微软雅黑", 9), fg="#27ae60", selectcolor="#ffffff",
                    activebackground="#ffffff").pack(side=tk.LEFT)
-    tk.Label(wm_row1, text="  图片：", font=("微软雅黑", 9), fg="#7f8c8d", bg="#ffffff").pack(side=tk.LEFT)
-    tk.Entry(wm_row1, textvariable=wm_image_var, font=("Consolas", 9),
+    tk.Label(wm_row1, text="  ASS：", font=("微软雅黑", 9), fg="#7f8c8d", bg="#ffffff").pack(side=tk.LEFT)
+    tk.Entry(wm_row1, textvariable=wm_ass_path_var, font=("Consolas", 9),
              fg="#2c3e50", bg="#f9faff", relief="solid", bd=1).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(4, 4))
 
-    def _browse_wm_image():
+    def _browse_wm_ass():
         from tkinter import filedialog
         p = filedialog.askopenfilename(
-            filetypes=[("图片文件", "*.png *.jpg *.jpeg *.bmp *.gif")])
+            filetypes=[("ASS字幕文件", "*.ass")])
         if p:
-            wm_image_var.set(p)
-    tk.Button(wm_row1, text="浏览", command=_browse_wm_image,
+            wm_ass_path_var.set(p)
+    tk.Button(wm_row1, text="浏览", command=_browse_wm_ass,
               font=("微软雅黑", 8), fg="#2d6cc9", bg="#eaf1fd",
               activebackground="#2d6cc9", activeforeground="white",
               bd=0, padx=6, cursor="hand2").pack(side=tk.LEFT)
+    tk.Label(wm_row1, text="（空=内置默认）", font=("微软雅黑", 7), fg="#bdc3c7", bg="#ffffff").pack(side=tk.LEFT)
 
-    # 第二行：缩放 + 对齐 + 边距
+    # 第二行：对齐 + 边距
     wm_row2 = tk.Frame(wm_frame, bg="#ffffff")
     wm_row2.pack(fill=tk.X, pady=(0, 2))
-    tk.Label(wm_row2, text="缩放%", font=("微软雅黑", 8), fg="#7f8c8d", bg="#ffffff").pack(side=tk.LEFT)
-    tk.Entry(wm_row2, textvariable=wm_scale_var, width=5,
-             font=("Consolas", 8), fg="#2c3e50", bg="#f9faff", relief="solid", bd=1).pack(side=tk.LEFT, padx=(2, 8))
     tk.Label(wm_row2, text="对齐", font=("微软雅黑", 8), fg="#7f8c8d", bg="#ffffff").pack(side=tk.LEFT)
     _align_options = ["top-left", "top-right", "bottom-left", "bottom-right"]
     _align_labels = ["左上", "右上", "左下", "右下"]
+    _label_to_key = dict(zip(_align_labels, _align_options))
+    _key_to_label = dict(zip(_align_options, _align_labels))
     from tkinter import ttk as _ttk
     wm_align_menu = _ttk.Combobox(wm_row2, textvariable=wm_align_var, width=6,
                                    values=_align_labels, state="readonly", font=("微软雅黑", 8))
-    # 值映射：label → alignment key
-    _label_to_key = dict(zip(_align_labels, _align_options))
-    _key_to_label = dict(zip(_align_options, _align_labels))
-    # 初始化显示
     cur_align = wm_align_var.get()
-    wm_align_var.set(_key_to_label.get(cur_align, "左上"))
-    def _on_align_change(*_):
-        label = wm_align_var.get()
-        wm_align_var.set(_label_to_key.get(label, "top-left"))
-    # 用 trace 实现 label→key 转换太复杂，改为保存时转换
+    wm_align_var.set(_key_to_label.get(cur_align, "右上"))
     wm_align_menu.pack(side=tk.LEFT, padx=(2, 8))
     tk.Label(wm_row2, text="边距px", font=("微软雅黑", 8), fg="#7f8c8d", bg="#ffffff").pack(side=tk.LEFT)
     tk.Entry(wm_row2, textvariable=wm_margin_var, width=5,
-             font=("Consolas", 8), fg="#2c3e50", bg="#f9faff", relief="solid", bd=1).pack(side=tk.LEFT, padx=(2, 0))
+             font=("Consolas", 8), fg="#2c3e50", bg="#f9faff", relief="solid", bd=1).pack(side=tk.LEFT, padx=(2, 8))
+    tk.Label(wm_row2, text="尺寸：1080p→300×80  4K→600×160（自动）",
+             font=("微软雅黑", 7), fg="#bdc3c7", bg="#ffffff").pack(side=tk.LEFT)
 
-    # 第三行：出现次数 + 每次时长
+    # 第三行：出现时间 + 持续秒数
     wm_row3 = tk.Frame(wm_frame, bg="#ffffff")
     wm_row3.pack(fill=tk.X, pady=(0, 2))
-    tk.Label(wm_row3, text="出现次数", font=("微软雅黑", 8), fg="#7f8c8d", bg="#ffffff").pack(side=tk.LEFT)
-    tk.Entry(wm_row3, textvariable=wm_appear_var, width=4,
-             font=("Consolas", 8), fg="#2c3e50", bg="#f9faff", relief="solid", bd=1).pack(side=tk.LEFT, padx=(2, 8))
-    tk.Label(wm_row3, text="每次秒数", font=("微软雅黑", 8), fg="#7f8c8d", bg="#ffffff").pack(side=tk.LEFT)
+    tk.Label(wm_row3, text="出现时间(秒)", font=("微软雅黑", 8), fg="#7f8c8d", bg="#ffffff").pack(side=tk.LEFT)
+    tk.Entry(wm_row3, textvariable=wm_start_var, width=6,
+             font=("Consolas", 8), fg="#2c3e50", bg="#f9faff", relief="solid", bd=1).pack(side=tk.LEFT, padx=(2, 4))
+    tk.Label(wm_row3, text="持续秒数", font=("微软雅黑", 8), fg="#7f8c8d", bg="#ffffff").pack(side=tk.LEFT)
     tk.Entry(wm_row3, textvariable=wm_dur_var, width=4,
              font=("Consolas", 8), fg="#2c3e50", bg="#f9faff", relief="solid", bd=1).pack(side=tk.LEFT, padx=(2, 8))
-    tk.Label(wm_row3, text="(渐显5s + 显示20s + 渐隐5s)", font=("微软雅黑", 7), fg="#bdc3c7", bg="#ffffff").pack(side=tk.LEFT)
+    tk.Label(wm_row3, text="（默认900秒=15:00，内置渐显渐隐3秒）",
+             font=("微软雅黑", 7), fg="#bdc3c7", bg="#ffffff").pack(side=tk.LEFT)
 
     # 第四行：保存 + 恢复默认
     wm_row4 = tk.Frame(wm_frame, bg="#ffffff")
@@ -980,32 +982,28 @@ def embed_ass_panel(parent, app):
         import config
         wm = config.WATERMARK_CONFIG
         wm["enabled"] = wm_enabled_var.get()
-        wm["image_path"] = wm_image_var.get()
-        try: wm["scale"] = int(wm_scale_var.get())
-        except: wm["scale"] = 100
-        # 对齐方式：UI 用中文 label，保存时转为 key
+        wm["ass_path"] = wm_ass_path_var.get()
         _label_to_key = {"左上": "top-left", "右上": "top-right", "左下": "bottom-left", "右下": "bottom-right"}
         label = wm_align_var.get()
         wm["alignment"] = _label_to_key.get(label, label)
         try: wm["margin"] = int(wm_margin_var.get())
         except: wm["margin"] = 10
-        try: wm["appearances"] = int(wm_appear_var.get())
-        except: wm["appearances"] = 3
+        try: wm["start_sec"] = int(wm_start_var.get())
+        except: wm["start_sec"] = 900
         try: wm["duration_sec"] = int(wm_dur_var.get())
         except: wm["duration_sec"] = 30
         config.save_config()
-        log(f"✅ 水印配置已保存（{wm['alignment']}，出现{wm['appearances']}次）")
+        log(f"✅ 水印配置已保存（{wm['alignment']}，{wm['start_sec']}秒开始）")
 
     def _reset_wm_inline():
         import config
         d = config.DEFAULT_WATERMARK
         wm_enabled_var.set(d["enabled"])
-        wm_image_var.set(d["image_path"])
-        wm_scale_var.set(str(d["scale"]))
+        wm_ass_path_var.set(d["ass_path"])
         _key_to_label = {"top-left": "左上", "top-right": "右上", "bottom-left": "左下", "bottom-right": "右下"}
-        wm_align_var.set(_key_to_label.get(d["alignment"], "左上"))
+        wm_align_var.set(_key_to_label.get(d["alignment"], "右上"))
         wm_margin_var.set(str(d["margin"]))
-        wm_appear_var.set(str(d["appearances"]))
+        wm_start_var.set(str(d["start_sec"]))
         wm_dur_var.set(str(d["duration_sec"]))
         _save_wm_inline()
 

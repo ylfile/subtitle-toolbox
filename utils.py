@@ -755,7 +755,7 @@ CN_FONT_4K = 110
 EN_FONT_4K = 80
 LAYOUT_GAP = 5
 # 双语行叠放：略小于字号像素，避免中文底与原版顶之间空隙过大
-BILINGUAL_GAP = 3
+BILINGUAL_GAP = 8
 BILINGUAL_LINE_RATIO = 0.78
 INFO_BELOW_BAR_GAP = 5  # 顶黑边装不下字号时，贴在黑边下沿外多少像素
 

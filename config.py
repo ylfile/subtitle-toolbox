@@ -44,15 +44,14 @@ DEFAULT_INFO_DIALOGUES = [
 DEFAULT_INFO_COLOR = "&H077DF6&"
 
 
-# 默认水印配置
+# 默认水印配置（ASS 矢量水印）
 DEFAULT_WATERMARK = {
     "enabled": False,
-    "image_path": "",
-    "scale": 100,
-    "alignment": "top-left",
-    "margin": 10,
-    "appearances": 3,
-    "duration_sec": 30,
+    "ass_path": "",           # 自定义 ASS 水印文件路径（空=使用内置默认）
+    "alignment": "top-right", # top-left / top-right / bottom-left / bottom-right
+    "margin": 10,             # 边距（像素）
+    "start_sec": 900,         # 出现时间（秒），默认 900=15:00
+    "duration_sec": 30,       # 持续秒数
 }
 
 
