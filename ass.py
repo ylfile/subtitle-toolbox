@@ -157,7 +157,7 @@ def _append_info_dialogues(ass_lines, style_info, cx, info_y, info_an):
         )
 
 
-def _append_watermark_dialogue(ass_lines, playres_x, playres_y, video_duration_sec=3600, top_bar=0):
+def _append_watermark_dialogue(ass_lines, playres_x, playres_y, video_duration_sec=3600, top_bar=0, bottom_bar=0):
     """如果水印配置启用，追加 ASS 水印 Dialogue 行"""
     import config
     wm = config.WATERMARK_CONFIG
@@ -174,6 +174,7 @@ def _append_watermark_dialogue(ass_lines, playres_x, playres_y, video_duration_s
             duration_sec=wm.get("duration_sec", 30),
             ass_path=wm.get("ass_path", ""),
             top_bar=top_bar,
+            bottom_bar=bottom_bar,
         )
         for line in lines:
             ass_lines.append(line)
@@ -451,7 +452,7 @@ def generate_ass(folder, crop_cfg, log, on_progress=None, progress_state=None, s
             )
 
         # 水印
-        _append_watermark_dialogue(ass_lines, playres_x, playres_y, top_bar=top_bar)
+        _append_watermark_dialogue(ass_lines, playres_x, playres_y, top_bar=top_bar, bottom_bar=bottom_bar)
 
         errors = self_check(ass_lines)
         if errors:

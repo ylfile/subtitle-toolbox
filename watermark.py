@@ -167,7 +167,7 @@ def generate_watermark_dialogues(
     playres_x=1920, playres_y=1080,
     alignment="top-right", margin=10,
     start_sec=900, duration_sec=30,
-    ass_path="", top_bar=0,
+    ass_path="", top_bar=0, bottom_bar=0,
 ):
     """
     生成水印 Dialogue 行（单次出现）。
@@ -181,20 +181,32 @@ def generate_watermark_dialogues(
 
     target_w, target_h = _resolve_target_size(playres_x, playres_y)
 
-    # X 位置：右对齐，右边距固定
-    pos_x = playres_x - target_w - margin
-
-    # Y 位置：跟随字幕组信息的垂直策略
-    top_bar = max(0, int(top_bar))
-    if top_bar >= target_h:
-        # 黑边够高 → 黑边内垂直居中
-        pos_y = (top_bar - target_h) // 2
-    elif top_bar > 0:
-        # 黑边不够高 → 贴黑边下方
-        pos_y = top_bar
+    # X 位置：根据对齐方向决定左/右边距
+    if "right" in alignment:
+        pos_x = playres_x - target_w - margin
     else:
-        # 无黑边 → 贴画面顶部
-        pos_y = margin
+        pos_x = margin
+
+    # Y 位置：根据对齐方向决定上/下黑边策略
+    top_bar = max(0, int(top_bar))
+    bottom_bar = max(0, int(bottom_bar))
+    if "top" in alignment:
+        # 上方：跟随顶部黑边垂直居中策略
+        if top_bar >= target_h:
+            pos_y = (top_bar - target_h) // 2
+        elif top_bar > 0:
+            pos_y = top_bar
+        else:
+            pos_y = margin
+    else:
+        # 下方：在底部黑边内垂直居中
+        bar_top = playres_y - bottom_bar
+        if bottom_bar >= target_h:
+            pos_y = bar_top + (bottom_bar - target_h) // 2
+        elif bottom_bar > 0:
+            pos_y = bar_top - target_h
+        else:
+            pos_y = playres_y - target_h - margin
     scale_x = target_w / orig_w
     scale_y = target_h / orig_h
 
